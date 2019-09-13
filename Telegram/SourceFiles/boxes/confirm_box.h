@@ -9,6 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "boxes/abstract_box.h"
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Ui {
 class Checkbox;
 class FlatLabel;
@@ -67,7 +71,7 @@ private:
 	const style::RoundButton &_confirmStyle;
 	bool _informative = false;
 
-	Text _text;
+	Ui::Text::String _text;
 	int _textWidth = 0;
 	int _textHeight = 0;
 	int _maxLineCount = 16;
@@ -109,7 +113,7 @@ private:
 
 	not_null<ChannelData*> _channel;
 
-	Text _text;
+	Ui::Text::String _text;
 	int32 _textWidth, _textHeight;
 
 	QRect _invitationLink;
@@ -119,30 +123,9 @@ private:
 
 };
 
-class ConvertToSupergroupBox : public BoxContent, public RPCSender {
-public:
-	ConvertToSupergroupBox(QWidget*, ChatData *chat);
-
-protected:
-	void prepare() override;
-
-	void keyPressEvent(QKeyEvent *e) override;
-	void paintEvent(QPaintEvent *e) override;
-
-private:
-	void convertToSupergroup();
-	void convertDone(const MTPUpdates &updates);
-	bool convertFail(const RPCError &error);
-
-	ChatData *_chat;
-	Text _text, _note;
-	int32 _textWidth, _textHeight;
-
-};
-
 class PinMessageBox : public BoxContent, public RPCSender {
 public:
-	PinMessageBox(QWidget*, ChannelData *channel, MsgId msgId);
+	PinMessageBox(QWidget*, not_null<PeerData*> peer, MsgId msgId);
 
 protected:
 	void prepare() override;
@@ -155,7 +138,7 @@ private:
 	void pinDone(const MTPUpdates &updates);
 	bool pinFail(const RPCError &error);
 
-	ChannelData *_channel;
+	not_null<PeerData*> _peer;
 	MsgId _msgId;
 
 	object_ptr<Ui::FlatLabel> _text;
@@ -171,7 +154,11 @@ public:
 		QWidget*,
 		not_null<HistoryItem*> item,
 		bool suggestModerateActions);
-	DeleteMessagesBox(QWidget*, MessageIdsList &&selected);
+	DeleteMessagesBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		MessageIdsList &&selected);
+	DeleteMessagesBox(QWidget*, not_null<PeerData*> peer, bool justClear);
 
 	void setDeleteConfirmedCallback(Fn<void()> callback) {
 		_deleteConfirmedCallback = std::move(callback);
@@ -184,17 +171,28 @@ protected:
 	void keyPressEvent(QKeyEvent *e) override;
 
 private:
+	struct RevokeConfig {
+		QString checkbox;
+		TextWithEntities description;
+	};
 	void deleteAndClear();
+	[[nodiscard]] PeerData *checkFromSinglePeer() const;
+	[[nodiscard]] bool hasScheduledMessages() const;
+	[[nodiscard]] std::optional<RevokeConfig> revokeText(
+		not_null<PeerData*> peer) const;
 
+	const not_null<Main::Session*> _session;
+
+	PeerData * const _wipeHistoryPeer = nullptr;
+	const bool _wipeHistoryJustClear = false;
 	const MessageIdsList _ids;
-	const bool _singleItem = false;
 	UserData *_moderateFrom = nullptr;
 	ChannelData *_moderateInChannel = nullptr;
 	bool _moderateBan = false;
 	bool _moderateDeleteAll = false;
 
 	object_ptr<Ui::FlatLabel> _text = { nullptr };
-	object_ptr<Ui::Checkbox> _forEveryone = { nullptr };
+	object_ptr<Ui::Checkbox> _revoke = { nullptr };
 	object_ptr<Ui::Checkbox> _banUser = { nullptr };
 	object_ptr<Ui::Checkbox> _reportSpam = { nullptr };
 	object_ptr<Ui::Checkbox> _deleteAll = { nullptr };
@@ -205,7 +203,11 @@ private:
 
 class ConfirmInviteBox : public BoxContent, public RPCSender {
 public:
-	ConfirmInviteBox(QWidget*, const QString &title, bool isChannel, const MTPChatPhoto &photo, int count, const QVector<UserData*> &participants);
+	ConfirmInviteBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		const MTPDchatInvite &data,
+		Fn<void()> submit);
 	~ConfirmInviteBox();
 
 protected:
@@ -215,12 +217,44 @@ protected:
 	void paintEvent(QPaintEvent *e) override;
 
 private:
+	static std::vector<not_null<UserData*>> GetParticipants(
+		not_null<Main::Session*> session,
+		const MTPDchatInvite &data);
+
+	const not_null<Main::Session*> _session;
+
+	Fn<void()> _submit;
 	object_ptr<Ui::FlatLabel> _title;
 	object_ptr<Ui::FlatLabel> _status;
-	ImagePtr _photo;
+	Image *_photo = nullptr;
 	std::unique_ptr<Ui::EmptyUserpic> _photoEmpty;
-	QVector<UserData*> _participants;
+	std::vector<not_null<UserData*>> _participants;
+	bool _isChannel = false;
 
 	int _userWidth = 0;
+
+};
+
+class ConfirmDontWarnBox : public BoxContent {
+public:
+	ConfirmDontWarnBox(
+		QWidget*,
+		rpl::producer<TextWithEntities> text,
+		const QString &checkbox,
+		rpl::producer<QString> confirm,
+		FnMut<void(bool)> callback);
+
+protected:
+	void prepare() override;
+
+private:
+	not_null<Ui::RpWidget*> setupContent(
+		rpl::producer<TextWithEntities> text,
+		const QString &checkbox,
+		FnMut<void(bool)> callback);
+
+	rpl::producer<QString> _confirm;
+	FnMut<void()> _callback;
+	not_null<Ui::RpWidget*> _content;
 
 };

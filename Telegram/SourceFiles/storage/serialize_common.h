@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/images.h"
 #include "mtproto/auth_key.h"
 
 namespace Serialize {
@@ -23,6 +22,13 @@ inline int bytearraySize(const QByteArray &arr) {
 inline int bytesSize(bytes::const_span bytes) {
 	return sizeof(quint32) + bytes.size();
 }
+
+inline int colorSize() {
+	return sizeof(quint32);
+}
+
+void writeColor(QDataStream &stream, const QColor &color);
+QColor readColor(QDataStream &stream);
 
 struct ReadBytesVectorWrap {
 	bytes::vector &bytes;
@@ -85,13 +91,16 @@ inline int dateTimeSize() {
 	return (sizeof(qint64) + sizeof(quint32) + sizeof(qint8));
 }
 
+int storageImageLocationSize(const StorageImageLocation &location);
 void writeStorageImageLocation(
 	QDataStream &stream,
 	const StorageImageLocation &location);
-StorageImageLocation readStorageImageLocation(
+
+// NB! This method can return StorageFileLocation with Type::Generic!
+// The reader should discard it or convert to one of the valid modern types.
+std::optional<StorageImageLocation> readStorageImageLocation(
 	int streamAppVersion,
 	QDataStream &stream);
-int storageImageLocationSize(const StorageImageLocation &location);
 
 template <typename T>
 inline T read(QDataStream &stream) {

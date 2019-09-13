@@ -45,11 +45,10 @@ Widget::Widget(
 , _inner(setInnerWidget(::Settings::CreateSection(
 		_type,
 		this,
-		controller->parentController(),
-		_self))) {
+		controller->parentController()))) {
 	_inner->sectionShowOther(
 	) | rpl::start_with_next([=](Type type) {
-		this->controller()->showSettings(type);
+		controller->showSettings(type);
 	}, _inner->lifetime());
 
 	controller->setCanSaveChanges(_inner->sectionCanSaveChanges());

@@ -59,35 +59,6 @@ constexpr int GetDcIdShift(ShiftedDcId shiftedDcId) {
 
 } // namespace MTP
 
-class Exception : public std::exception {
-public:
-	explicit Exception(const QString &msg) noexcept;
-
-	const char *what() const noexcept override;
-
-private:
-	QByteArray _msg;
-
-};
-
-class mtpErrorUnexpected : public Exception {
-public:
-	mtpErrorUnexpected(mtpTypeId typeId, const QString &type) noexcept;
-
-};
-
-class mtpErrorInsufficient : public Exception {
-public:
-	mtpErrorInsufficient() noexcept;
-
-};
-
-class mtpErrorBadTypeId : public Exception {
-public:
-	mtpErrorBadTypeId(mtpTypeId typeId, const QString &type) noexcept;
-
-};
-
 namespace MTP {
 namespace internal {
 
@@ -174,6 +145,9 @@ private:
 
 };
 
+struct ZeroFlagsHelper {
+};
+
 } // namespace internal
 } // namespace MTP
 
@@ -256,10 +230,12 @@ public:
 	uint32 innerLength() const {
 		return sizeof(mtpTypeId) + bareT::innerLength();
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = 0) {
-		if (from + 1 > end) throw mtpErrorInsufficient();
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = 0) {
+		if (from + 1 > end) {
+			return false;
+		}
 		cons = (mtpTypeId)*(from++);
-		bareT::read(from, end, cons);
+		return bareT::read(from, end, cons);
 	}
 	void write(mtpBuffer &to) const {
         to.push_back(bareT::type());
@@ -366,6 +342,62 @@ SecureRequest SecureRequest::Serialize(const Request &request) {
 	return serialized;
 }
 
+template <typename Type>
+struct RepeatHelper {
+	using type = Type;
+};
+template <typename Type>
+using Repeat = typename RepeatHelper<Type>::type;
+
+struct InnerHelper {
+	static void Check(...);
+	template <typename Type, typename Result = decltype(std::declval<Type>().v)>
+	static Result Check(const Type&);
+
+	template <typename Type>
+	using type = std::decay_t<decltype(Check(std::declval<Type>()))>;
+};
+
+template <typename Type>
+class conditional {
+public:
+	conditional() = default;
+	conditional(const Type *value) : _value(value) {
+	}
+
+	operator const Type*() const {
+		return _value;
+	}
+	const Type *operator->() const {
+		Expects(_value != nullptr);
+
+		return _value;
+	}
+	const Type &operator*() const {
+		Expects(_value != nullptr);
+
+		return *_value;
+	}
+
+	template <
+		typename Inner = InnerHelper::type<Type>,
+		typename = std::enable_if_t<!std::is_same_v<Inner, void>>>
+	Inner value_or(Repeat<Inner> fallback) const {
+		return _value ? _value->v : fallback;
+	}
+
+	template <
+		typename Inner = InnerHelper::type<Type>,
+		typename = std::enable_if_t<!std::is_same_v<Inner, void>>>
+	Inner value_or_empty() const {
+		return _value ? _value->v : Inner();
+	}
+
+private:
+	const Type *_value = nullptr;
+
+};
+
 } // namespace MTP
 
 class MTPint {
@@ -380,10 +412,12 @@ public:
 	mtpTypeId type() const {
 		return mtpc_int;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int) {
-		if (from + 1 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_int) throw mtpErrorUnexpected(cons, "MTPint");
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int) {
+		if (from + 1 > end || cons != mtpc_int) {
+			return false;
+		}
 		v = (int32)*(from++);
+		return true;
 	}
 	void write(mtpBuffer &to) const {
 		to.push_back((mtpPrime)v);
@@ -400,21 +434,16 @@ inline MTPint MTP_int(int32 v) {
 }
 using MTPInt = MTPBoxed<MTPint>;
 
-namespace internal {
-
-struct ZeroFlagsHelper {
-};
-
-} // namespace internal
-
 template <typename Flags>
 class MTPflags {
 public:
 	Flags v = 0;
-	static_assert(sizeof(Flags) == sizeof(int32), "MTPflags are allowed only wrapping int32 flag types!");
+	static_assert(
+		sizeof(Flags) == sizeof(int32),
+		"MTPflags are allowed only wrapping int32 flag types!");
 
 	MTPflags() = default;
-	MTPflags(internal::ZeroFlagsHelper helper) {
+	MTPflags(MTP::internal::ZeroFlagsHelper helper) {
 	}
 
 	uint32 innerLength() const {
@@ -423,10 +452,12 @@ public:
 	mtpTypeId type() const {
 		return mtpc_flags;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_flags) {
-		if (from + 1 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_flags) throw mtpErrorUnexpected(cons, "MTPflags");
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_flags) {
+		if (from + 1 > end || cons != mtpc_flags) {
+			return false;
+		}
 		v = Flags::from_raw(static_cast<typename Flags::Type>(*(from++)));
+		return true;
 	}
 	void write(mtpBuffer &to) const {
 		to.push_back(static_cast<mtpPrime>(v.value()));
@@ -454,8 +485,8 @@ inline MTPflags<base::flags<T>> MTP_flags(T v) {
 	return MTPflags<base::flags<T>>(v);
 }
 
-inline internal::ZeroFlagsHelper MTP_flags(void(internal::ZeroFlagsHelper::*)()) {
-	return internal::ZeroFlagsHelper();
+inline MTP::internal::ZeroFlagsHelper MTP_flags(void(MTP::internal::ZeroFlagsHelper::*)()) {
+	return MTP::internal::ZeroFlagsHelper();
 }
 
 template <typename Flags>
@@ -480,11 +511,13 @@ public:
 	mtpTypeId type() const {
 		return mtpc_long;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_long) {
-		if (from + 2 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_long) throw mtpErrorUnexpected(cons, "MTPlong");
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_long) {
+		if (from + 2 > end || cons != mtpc_long) {
+			return false;
+		}
 		v = (uint64)(((uint32*)from)[0]) | ((uint64)(((uint32*)from)[1]) << 32);
 		from += 2;
+		return true;
 	}
 	void write(mtpBuffer &to) const {
 		to.push_back((mtpPrime)(v & 0xFFFFFFFFL));
@@ -522,12 +555,14 @@ public:
 	mtpTypeId type() const {
 		return mtpc_int128;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int128) {
-		if (from + 4 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_int128) throw mtpErrorUnexpected(cons, "MTPint128");
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int128) {
+		if (from + 4 > end || cons != mtpc_int128) {
+			return false;
+		}
 		l = (uint64)(((uint32*)from)[0]) | ((uint64)(((uint32*)from)[1]) << 32);
 		h = (uint64)(((uint32*)from)[2]) | ((uint64)(((uint32*)from)[3]) << 32);
 		from += 4;
+		return true;
 	}
 	void write(mtpBuffer &to) const {
 		to.push_back((mtpPrime)(l & 0xFFFFFFFFL));
@@ -567,10 +602,12 @@ public:
 	mtpTypeId type() const {
 		return mtpc_int256;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int256) {
-		if (cons != mtpc_int256) throw mtpErrorUnexpected(cons, "MTPint256");
-		l.read(from, end);
-		h.read(from, end);
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_int256) {
+		if (cons != mtpc_int256) {
+			return false;
+		}
+		return l.read(from, end)
+			&& h.read(from, end);
 	}
 	void write(mtpBuffer &to) const {
 		l.write(to);
@@ -607,14 +644,18 @@ public:
 	mtpTypeId type() const {
 		return mtpc_double;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_double) {
-		if (from + 2 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_double) throw mtpErrorUnexpected(cons, "MTPdouble");
-		*(uint64*)(&v) = (uint64)(((uint32*)from)[0]) | ((uint64)(((uint32*)from)[1]) << 32);
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_double) {
+		if (from + 2 > end || cons != mtpc_double) {
+			return false;
+		}
+		auto nv = (uint64)(((uint32*)from)[0]) | ((uint64)(((uint32*)from)[1]) << 32);
+		std::memcpy(&v, &nv, sizeof(v));
 		from += 2;
+		return true;
 	}
 	void write(mtpBuffer &to) const {
-		uint64 iv = *(uint64*)(&v);
+		uint64 iv;
+		std::memcpy(&iv, &v, sizeof(v));
 		to.push_back((mtpPrime)(iv & 0xFFFFFFFFL));
 		to.push_back((mtpPrime)(iv >> 32));
 	}
@@ -648,7 +689,7 @@ public:
 	mtpTypeId type() const {
 		return mtpc_string;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_string);
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_string);
 	void write(mtpBuffer &to) const;
 
 	QByteArray v;
@@ -660,9 +701,11 @@ private:
 	friend MTPstring MTP_string(const std::string &v);
 	friend MTPstring MTP_string(const QString &v);
 	friend MTPstring MTP_string(const char *v);
+	friend MTPstring MTP_string();
 
 	friend MTPbytes MTP_bytes(const QByteArray &v);
 	friend MTPbytes MTP_bytes(QByteArray &&v);
+	friend MTPbytes MTP_bytes();
 
 };
 using MTPString = MTPBoxed<MTPstring>;
@@ -677,6 +720,9 @@ inline MTPstring MTP_string(const QString &v) {
 inline MTPstring MTP_string(const char *v) {
 	return MTPstring(QByteArray(v, strlen(v)));
 }
+inline MTPstring MTP_string() {
+	return MTPstring(QByteArray());
+}
 MTPstring MTP_string(const QByteArray &v) = delete;
 
 inline MTPbytes MTP_bytes(const QByteArray &v) {
@@ -684,6 +730,9 @@ inline MTPbytes MTP_bytes(const QByteArray &v) {
 }
 inline MTPbytes MTP_bytes(QByteArray &&v) {
 	return MTPbytes(std::move(v));
+}
+inline MTPbytes MTP_bytes() {
+	return MTPbytes(QByteArray());
 }
 inline MTPbytes MTP_bytes(bytes::const_span buffer) {
 	return MTP_bytes(QByteArray(
@@ -705,6 +754,10 @@ inline QString qs(const MTPstring &v) {
 	return QString::fromUtf8(v.v);
 }
 
+inline QString qs(const QByteArray &v) {
+	return QString::fromUtf8(v);
+}
+
 inline QByteArray qba(const MTPstring &v) {
 	return v.v;
 }
@@ -724,16 +777,20 @@ public:
 	mtpTypeId type() const {
 		return mtpc_vector;
 	}
-	void read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_vector) {
-		if (from + 1 > end) throw mtpErrorInsufficient();
-		if (cons != mtpc_vector) throw mtpErrorUnexpected(cons, "MTPvector");
+	[[nodiscard]] bool read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_vector) {
+		if (from + 1 > end || cons != mtpc_vector) {
+			return false;
+		}
 		auto count = static_cast<uint32>(*(from++));
 
 		auto vector = QVector<T>(count, T());
 		for (auto &item : vector) {
-			item.read(from, end);
+			if (!item.read(from, end)) {
+				return false;
+			}
 		}
 		v = std::move(vector);
+		return true;
 	}
 	void write(mtpBuffer &to) const {
 		to.push_back(v.size());
@@ -756,6 +813,8 @@ private:
 	friend MTPvector<U> MTP_vector(const QVector<U> &v);
 	template <typename U>
 	friend MTPvector<U> MTP_vector(QVector<U> &&v);
+	template <typename U>
+	friend MTPvector<U> MTP_vector();
 
 };
 template <typename T>
@@ -773,6 +832,10 @@ inline MTPvector<T> MTP_vector(const QVector<T> &v) {
 template <typename T>
 inline MTPvector<T> MTP_vector(QVector<T> &&v) {
 	return MTPvector<T>(std::move(v));
+}
+template <typename T>
+inline MTPvector<T> MTP_vector() {
+	return MTPvector<T>();
 }
 template <typename T>
 using MTPVector = MTPBoxed<MTPvector<T>>;
@@ -826,6 +889,10 @@ struct MTPStringLogger {
 		return (*this);
 	}
 
+	MTPStringLogger &error(const char *problem = "could not decode type") {
+		return add("[ERROR] (").add(problem).add(")");
+	}
+
 	void ensureLength(int32 add) {
 		if (size + add <= alloced) return;
 
@@ -846,16 +913,12 @@ struct MTPStringLogger {
 
 };
 
-void mtpTextSerializeType(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpPrime cons = 0, uint32 level = 0, mtpPrime vcons = 0);
+[[nodiscard]] bool mtpTextSerializeType(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpPrime cons = 0, uint32 level = 0, mtpPrime vcons = 0);
 
-void mtpTextSerializeCore(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons, uint32 level, mtpPrime vcons = 0);
+[[nodiscard]] bool mtpTextSerializeCore(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons, uint32 level, mtpPrime vcons = 0);
 
 inline QString mtpTextSerialize(const mtpPrime *&from, const mtpPrime *end) {
 	MTPStringLogger to;
-	try {
-		mtpTextSerializeType(to, from, end, mtpc_core_message);
-	} catch (Exception &e) {
-		to.add("[ERROR] (").add(e.what()).add(")");
-	}
+	[[maybe_unused]] bool result = mtpTextSerializeType(to, from, end, mtpc_core_message);
 	return QString::fromUtf8(to.p, to.size);
 }

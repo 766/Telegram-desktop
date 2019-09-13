@@ -10,6 +10,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_file_utilities.h"
 #include "storage/localimageloader.h"
 #include "core/mime_type.h"
+#include "ui/image/image_prepare.h"
+
+#include <QtCore/QSemaphore>
+#include <QtCore/QMimeData>
 
 namespace Storage {
 namespace {
@@ -26,8 +30,12 @@ bool HasExtensionFrom(const QString &file, const QStringList &extensions) {
 	return false;
 }
 
-bool ValidPhotoForAlbum(const FileMediaInformation::Image &image) {
-	if (image.animated) {
+bool ValidPhotoForAlbum(
+		const FileMediaInformation::Image &image,
+		const QString &mime) {
+	if (image.animated
+		|| mime == qstr("image/webp")
+		|| mime == qstr("application/x-tgsticker")) {
 		return false;
 	}
 	const auto width = image.data.width();
@@ -78,10 +86,10 @@ bool PrepareAlbumMediaIsWaiting(
 		using Video = FileMediaInformation::Video;
 		if (const auto image = base::get_if<Image>(
 				&file.information->media)) {
-			if (ValidPhotoForAlbum(*image)) {
+			if (ValidPhotoForAlbum(*image, file.mime)) {
 				file.shownDimensions = PrepareShownDimensions(image->data);
 				file.preview = Images::prepareOpaque(image->data.scaledToWidth(
-					std::min(previewWidth, convertScale(image->data.width()))
+					std::min(previewWidth, ConvertScale(image->data.width()))
 						* cIntRetinaFactor(),
 					Qt::SmoothTransformation));
 				Assert(!file.preview.isNull());
@@ -308,6 +316,19 @@ void PreparedList::mergeToEnd(PreparedList &&other) {
 	} else {
 		albumIsPossible = false;
 	}
+}
+
+bool PreparedList::canAddCaption(bool isAlbum, bool compressImages) const {
+	const auto isSticker = [&] {
+		if (files.empty()) {
+			return false;
+		}
+		return (files.front().mime == qstr("image/webp"))
+			|| files.front().path.endsWith(
+				qstr(".tgs"),
+				Qt::CaseInsensitive);
+	};
+	return isAlbum || (files.size() == 1 && !isSticker());
 }
 
 int MaxAlbumItems() {

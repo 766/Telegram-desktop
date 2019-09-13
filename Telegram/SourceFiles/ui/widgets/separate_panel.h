@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/rp_widget.h"
+#include "ui/effects/animations.h"
 #include "boxes/abstract_box.h"
 
 namespace Ui {
@@ -40,6 +41,7 @@ public:
 		LayerOptions options,
 		anim::type animated);
 	void showToast(const QString &text);
+	void destroyLayer();
 
 	rpl::producer<> backRequests() const;
 	rpl::producer<> closeRequests() const;
@@ -84,7 +86,7 @@ private:
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _back;
 	object_ptr<Ui::RpWidget> _body;
 	base::unique_qptr<Ui::RpWidget> _inner;
-	object_ptr<Window::LayerStackWidget> _layer = { nullptr };
+	base::unique_qptr<Window::LayerStackWidget> _layer = { nullptr };
 	rpl::event_stream<> _synteticBackRequests;
 	rpl::event_stream<> _userCloseRequests;
 	rpl::event_stream<> _closeEvents;
@@ -97,10 +99,10 @@ private:
 	QPoint _dragStartMousePosition;
 	QPoint _dragStartMyPosition;
 
-	Animation _titleLeft;
+	Ui::Animations::Simple _titleLeft;
 	bool _visible = false;
 
-	Animation _opacityAnimation;
+	Ui::Animations::Simple _opacityAnimation;
 	QPixmap _animationCache;
 	QPixmap _borderParts;
 

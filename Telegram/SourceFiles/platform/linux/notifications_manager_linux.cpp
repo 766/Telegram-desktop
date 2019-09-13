@@ -111,6 +111,7 @@ public:
 	bool show() {
 		if (valid()) {
 			GError *error = nullptr;
+
 			Libs::notify_notification_show(_data, &error);
 			if (!error) {
 				return true;
@@ -152,6 +153,8 @@ private:
 			Libs::notify_notification_set_hint_string(_data, "x-canonical-append", "true");
 		}
 
+		Libs::notify_notification_set_hint_string(_data, "desktop-entry", "telegramdesktop");
+
 		auto signalReceiver = Libs::g_object_cast(_data);
 		auto signalHandler = G_CALLBACK(NotificationData::notificationClosed);
 		auto signalName = "closed";
@@ -162,7 +165,7 @@ private:
 		Libs::notify_notification_set_timeout(_data, Libs::NOTIFY_EXPIRES_DEFAULT);
 
 		if ((*guarded)->hasActionsSupport()) {
-			auto label = lang(lng_notification_reply).toUtf8();
+			auto label = tr::lng_notification_reply(tr::now).toUtf8();
 			auto actionReceiver = _data;
 			auto actionHandler = &NotificationData::notificationClicked;
 			auto actionLabel = label.constData();
@@ -301,9 +304,16 @@ public:
 
 	void init(Manager *manager);
 
-	void showNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton);
+	void showNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton);
 	void clearAll();
-	void clearFromHistory(History *history);
+	void clearFromHistory(not_null<History*> history);
 	void clearNotification(PeerId peerId, MsgId msgId);
 
 	bool hasPoorSupport() const {
@@ -381,7 +391,14 @@ QString Manager::Private::escapeNotificationText(const QString &text) const {
 	return _markupSupported ? escapeHtml(text) : text;
 }
 
-void Manager::Private::showNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton) {
+void Manager::Private::showNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton) {
 	auto titleText = escapeNotificationText(title);
 	auto subtitleText = escapeNotificationText(subtitle);
 	auto msgText = escapeNotificationText(msg);
@@ -437,12 +454,9 @@ void Manager::Private::showNextNotification() {
 		return;
 	}
 
-	StorageKey key;
-	if (data.hideNameAndPhoto) {
-		key = StorageKey(0, 0);
-	} else {
-		key = data.peer->userpicUniqueKey();
-	}
+	const auto key = data.hideNameAndPhoto
+		? InMemoryKey()
+		: data.peer->userpicUniqueKey();
 	notification->setImage(_cachedUserpics.get(key, data.peer));
 
 	auto i = _notifications.find(peerId);
@@ -480,7 +494,7 @@ void Manager::Private::clearAll() {
 	}
 }
 
-void Manager::Private::clearFromHistory(History *history) {
+void Manager::Private::clearFromHistory(not_null<History*> history) {
 	for (auto i = _queuedNotifications.begin(); i != _queuedNotifications.end();) {
 		if (i->peer == history->peer) {
 			i = _queuedNotifications.erase(i);
@@ -537,15 +551,29 @@ bool Manager::hasActionsSupport() const {
 
 Manager::~Manager() = default;
 
-void Manager::doShowNativeNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton) {
-	_private->showNotification(peer, msgId, title, subtitle, msg, hideNameAndPhoto, hideReplyButton);
+void Manager::doShowNativeNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton) {
+	_private->showNotification(
+		peer,
+		msgId,
+		title,
+		subtitle,
+		msg,
+		hideNameAndPhoto,
+		hideReplyButton);
 }
 
 void Manager::doClearAllFast() {
 	_private->clearAll();
 }
 
-void Manager::doClearFromHistory(History *history) {
+void Manager::doClearFromHistory(not_null<History*> history) {
 	_private->clearFromHistory(history);
 }
 #endif // !TDESKTOP_DISABLE_GTK_INTEGRATION

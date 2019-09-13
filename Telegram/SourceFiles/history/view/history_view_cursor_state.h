@@ -30,34 +30,36 @@ struct TextState {
 	TextState(not_null<const HistoryItem*> item);
 	TextState(
 		not_null<const HistoryItem*> item,
-		const Text::StateResult &state);
+		const Ui::Text::StateResult &state);
 	TextState(
 		not_null<const HistoryItem*> item,
 		ClickHandlerPtr link);
 	TextState(not_null<const HistoryView::Element*> view);
 	TextState(
 		not_null<const HistoryView::Element*> view,
-		const Text::StateResult &state);
+		const Ui::Text::StateResult &state);
 	TextState(
 		not_null<const HistoryView::Element*> view,
 		ClickHandlerPtr link);
 	TextState(
 		std::nullptr_t,
-		const Text::StateResult &state);
+		const Ui::Text::StateResult &state);
 	TextState(std::nullptr_t, ClickHandlerPtr link);
 
 	FullMsgId itemId;
 	CursorState cursor = CursorState::None;
 	ClickHandlerPtr link;
 	bool afterSymbol = false;
+	bool customTooltip = false;
 	uint16 symbol = 0;
+	QString customTooltipText;
 
 };
 
 struct StateRequest {
-	Text::StateRequest::Flags flags = Text::StateRequest::Flag::LookupLink;
-	Text::StateRequest forText() const {
-		Text::StateRequest result;
+	Ui::Text::StateRequest::Flags flags = Ui::Text::StateRequest::Flag::LookupLink;
+	Ui::Text::StateRequest forText() const {
+		Ui::Text::StateRequest result;
 		result.flags = flags;
 		return result;
 	}

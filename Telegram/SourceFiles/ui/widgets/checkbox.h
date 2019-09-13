@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/widgets/buttons.h"
+#include "ui/effects/animations.h"
 #include "styles/style_widgets.h"
-#include <rpl/event_stream.h>
 
 namespace Ui {
 
@@ -24,25 +24,21 @@ public:
 		return _checked;
 	}
 	void update();
-	float64 currentAnimationValue(TimeMs ms);
+	float64 currentAnimationValue();
 	bool animating() const;
 
+	auto checkedChanges() const {
+		return _checks.events();
+	}
 	auto checkedValue() const {
 		return _checks.events_starting_with(checked());
 	}
 
 	virtual QSize getSize() const = 0;
 
-	// Zero instead of ms value means that animation was already updated for this time.
-	// It can be passed to currentAnimationValue() safely.
-	virtual void paint(Painter &p, int left, int top, int outerWidth, TimeMs ms) = 0;
+	virtual void paint(Painter &p, int left, int top, int outerWidth) = 0;
 	virtual QImage prepareRippleMask() const = 0;
 	virtual bool checkRippleStartPosition(QPoint position) const = 0;
-
-	void paint(Painter &p, int left, int top, int outerWidth) {
-		// Pass zero in ms if the animation was already updated for this time.
-		paint(p, left, top, outerWidth, 0);
-	}
 
 	virtual ~AbstractCheckView() = default;
 
@@ -53,7 +49,7 @@ private:
 	int _duration = 0;
 	bool _checked = false;
 	Fn<void()> _updateCallback;
-	Animation _toggleAnimation;
+	Ui::Animations::Simple _toggleAnimation;
 
 	rpl::event_stream<bool> _checks;
 
@@ -69,7 +65,7 @@ public:
 	void setStyle(const style::Check &st);
 
 	QSize getSize() const override;
-	void paint(Painter &p, int left, int top, int outerWidth, TimeMs ms) override;
+	void paint(Painter &p, int left, int top, int outerWidth) override;
 	QImage prepareRippleMask() const override;
 	bool checkRippleStartPosition(QPoint position) const override;
 
@@ -97,7 +93,7 @@ public:
 	void setUntoggledOverride(std::optional<QColor> untoggledOverride);
 
 	QSize getSize() const override;
-	void paint(Painter &p, int left, int top, int outerWidth, TimeMs ms) override;
+	void paint(Painter &p, int left, int top, int outerWidth) override;
 	QImage prepareRippleMask() const override;
 	bool checkRippleStartPosition(QPoint position) const override;
 
@@ -120,15 +116,17 @@ public:
 	void setStyle(const style::Toggle &st);
 
 	QSize getSize() const override;
-	void paint(Painter &p, int left, int top, int outerWidth, TimeMs ms) override;
+	void paint(Painter &p, int left, int top, int outerWidth) override;
 	QImage prepareRippleMask() const override;
 	bool checkRippleStartPosition(QPoint position) const override;
+	void setLocked(bool locked);
 
 private:
 	void paintXV(Painter &p, int left, int top, int outerWidth, float64 toggled, const QBrush &brush);
 	QSize rippleSize() const;
 
 	not_null<const style::Toggle*> _st;
+	bool _locked = false;
 
 };
 
@@ -152,16 +150,21 @@ public:
 		const style::Checkbox &st,
 		std::unique_ptr<AbstractCheckView> check);
 
-	void setText(const QString &text);
+	void setText(const QString &text, bool rich = false);
 	void setCheckAlignment(style::align alignment);
+	void setAllowTextLines(int lines = 0);
+	void setTextBreakEverywhere(bool allow = true);
 
 	bool checked() const;
+	rpl::producer<bool> checkedChanges() const;
+	rpl::producer<bool> checkedValue() const;
 	enum class NotifyAboutChange {
 		Notify,
 		DontNotify,
 	};
-	void setChecked(bool checked, NotifyAboutChange notify = NotifyAboutChange::Notify);
-	base::Observable<bool> checkedChanged;
+	void setChecked(
+		bool checked,
+		NotifyAboutChange notify = NotifyAboutChange::Notify);
 
 	void finishAnimating();
 
@@ -189,13 +192,17 @@ protected:
 private:
 	void resizeToText();
 	QPixmap grabCheckCache() const;
+	int countTextMinWidth() const;
 
 	const style::Checkbox &_st;
 	std::unique_ptr<AbstractCheckView> _check;
+	rpl::event_stream<bool> _checkedChanges;
 	QPixmap _checkCache;
 
-	Text _text;
+	Text::String _text;
 	style::align _checkAlignment = style::al_left;
+	int _allowTextLines = 1;
+	bool _textBreakEverywhere = false;
 
 };
 
@@ -237,7 +244,7 @@ private:
 
 };
 
-class Radiobutton : public Checkbox, private base::Subscriber {
+class Radiobutton : public Checkbox {
 public:
 	Radiobutton(
 		QWidget *parent,
@@ -261,8 +268,10 @@ protected:
 private:
 	// Hide the names from Checkbox.
 	bool checked() const;
+	void checkedChanges() const;
+	void checkedValue() const;
 	void setChecked(bool checked, NotifyAboutChange notify);
-	void checkedChanged();
+
 	Checkbox *checkbox() {
 		return this;
 	}

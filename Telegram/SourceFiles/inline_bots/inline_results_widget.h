@@ -7,9 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/twidget.h"
+#include "ui/rp_widget.h"
 #include "ui/abstract_button.h"
+#include "ui/widgets/tooltip.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/panel_animation.h"
+#include "base/timer.h"
 #include "mtproto/sender.h"
 #include "inline_bots/inline_bot_layout_item.h"
 
@@ -23,7 +26,7 @@ class RippleAnimation;
 } // namesapce Ui
 
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 namespace InlineBots {
@@ -46,11 +49,15 @@ struct CacheEntry {
 	Results results;
 };
 
-class Inner : public TWidget, public Context, private base::Subscriber {
+class Inner
+	: public TWidget
+	, public Ui::AbstractTooltipShower
+	, public Context
+	, private base::Subscriber {
 	Q_OBJECT
 
 public:
-	Inner(QWidget *parent, not_null<Window::Controller*> controller);
+	Inner(QWidget *parent, not_null<Window::SessionController*> controller);
 
 	void hideFinish(bool completely);
 
@@ -74,6 +81,10 @@ public:
 		_resultSelectedCallback = std::move(callback);
 	}
 
+	// Ui::AbstractTooltipShower interface.
+	QString tooltipText() const override;
+	QPoint tooltipPos() const override;
+
 	~Inner();
 
 protected:
@@ -90,8 +101,6 @@ protected:
 	void enterFromChildEvent(QEvent *e, QWidget *child) override;
 
 private slots:
-	void onPreview();
-	void onUpdateInlineItems();
 	void onSwitchPm();
 
 signals:
@@ -101,6 +110,11 @@ private:
 	static constexpr bool kRefreshIconsScrollAnimation = true;
 	static constexpr bool kRefreshIconsNoAnimation = false;
 
+	struct Row {
+		int height = 0;
+		QVector<ItemBase*> items;
+	};
+
 	void updateSelected();
 	void checkRestrictedPeer();
 	bool isRestrictedView();
@@ -109,30 +123,9 @@ private:
 
 	void refreshSwitchPmButton(const CacheEntry *entry);
 
-	not_null<Window::Controller*> _controller;
-
-	int _visibleTop = 0;
-	int _visibleBottom = 0;
-
-	UserData *_inlineBot = nullptr;
-	PeerData *_inlineQueryPeer = nullptr;
-	TimeMs _lastScrolled = 0;
-	QTimer _updateInlineItems;
-	bool _inlineWithThumb = false;
-
-	object_ptr<Ui::RoundButton> _switchPmButton = { nullptr };
-	QString _switchPmStartToken;
-
-	object_ptr<Ui::FlatLabel> _restrictedLabel = { nullptr };
-
-	struct Row {
-		int height = 0;
-		QVector<ItemBase*> items;
-	};
-	QVector<Row> _rows;
+	void showPreview();
+	void updateInlineItems();
 	void clearInlineRows(bool resultsDeleted);
-
-	std::map<Result*, std::unique_ptr<ItemBase>> _inlineLayouts;
 	ItemBase *layoutPrepareInlineResult(Result *result, int32 position);
 
 	bool inlineRowsAddItem(Result *result, Row &row, int32 &sumWidth);
@@ -144,11 +137,31 @@ private:
 	int validateExistingInlineRows(const Results &results);
 	void selectInlineResult(int row, int column);
 
+	not_null<Window::SessionController*> _controller;
+
+	int _visibleTop = 0;
+	int _visibleBottom = 0;
+
+	UserData *_inlineBot = nullptr;
+	PeerData *_inlineQueryPeer = nullptr;
+	crl::time _lastScrolled = 0;
+	base::Timer _updateInlineItems;
+	bool _inlineWithThumb = false;
+
+	object_ptr<Ui::RoundButton> _switchPmButton = { nullptr };
+	QString _switchPmStartToken;
+
+	object_ptr<Ui::FlatLabel> _restrictedLabel = { nullptr };
+
+	QVector<Row> _rows;
+
+	std::map<Result*, std::unique_ptr<ItemBase>> _inlineLayouts;
+
 	int _selected = -1;
 	int _pressed = -1;
 	QPoint _lastMousePos;
 
-	QTimer _previewTimer;
+	base::Timer _previewTimer;
 	bool _previewShown = false;
 
 	Fn<void(Result *result, UserData *bot)> _resultSelectedCallback;
@@ -157,11 +170,11 @@ private:
 
 } // namespace internal
 
-class Widget : public TWidget, private MTP::Sender {
+class Widget : public Ui::RpWidget, private MTP::Sender {
 	Q_OBJECT
 
 public:
-	Widget(QWidget *parent, not_null<Window::Controller*> controller);
+	Widget(QWidget *parent, not_null<Window::SessionController*> controller);
 
 	void moveBottom(int bottom);
 
@@ -188,8 +201,6 @@ protected:
 	void paintEvent(QPaintEvent *e) override;
 
 private slots:
-	void onWndActiveChanged();
-
 	void onScroll();
 
 	void onInlineRequest();
@@ -231,7 +242,7 @@ private:
 	bool refreshInlineRows(int *added = nullptr);
 	void inlineResultsDone(const MTPmessages_BotResults &result);
 
-	not_null<Window::Controller*> _controller;
+	not_null<Window::SessionController*> _controller;
 
 	int _contentMaxHeight = 0;
 	int _contentHeight = 0;
@@ -242,11 +253,11 @@ private:
 	int _bottom = 0;
 
 	std::unique_ptr<Ui::PanelAnimation> _showAnimation;
-	Animation _a_show;
+	Ui::Animations::Simple _a_show;
 
 	bool _hiding = false;
 	QPixmap _cache;
-	Animation _a_opacity;
+	Ui::Animations::Simple _a_opacity;
 	bool _inPanelGrab = false;
 
 	object_ptr<Ui::ScrollArea> _scroll;

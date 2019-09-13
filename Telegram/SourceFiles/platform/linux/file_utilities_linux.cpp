@@ -10,9 +10,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <private/qguiapplication_p.h>
 #include "platform/linux/linux_libs.h"
 #include "platform/linux/linux_gdk_helper.h"
-#include "messenger.h"
+#include "core/application.h"
 #include "mainwindow.h"
 #include "storage/localstorage.h"
+
+#include <QtCore/QProcess>
 
 QStringList qt_make_filter_list(const QString &filter);
 
@@ -49,7 +51,8 @@ QByteArray EscapeShell(const QByteArray &content) {
 } // namespace internal
 
 void UnsafeShowInFolder(const QString &filepath) {
-	Ui::hideLayer(anim::type::instant); // Hide mediaview to make other apps visible.
+	// Hide mediaview to make other apps visible.
+	Ui::hideLayer(anim::type::instant);
 
 	auto absolutePath = QFileInfo(filepath).absoluteFilePath();
 	QProcess process;
@@ -63,7 +66,7 @@ void UnsafeShowInFolder(const QString &filepath) {
 		arguments << "--select" << absolutePath;
 	} else if (output == qstr("nautilus.desktop") || output == qstr("org.gnome.Nautilus.desktop") || output == qstr("nautilus-folder-handler.desktop")) {
 		command = qsl("nautilus");
-		arguments << "--no-desktop" << absolutePath;
+		arguments << absolutePath;
 	} else if (output == qstr("nemo.desktop")) {
 		command = qsl("nemo");
 		arguments << "--no-desktop" << absolutePath;
@@ -99,6 +102,9 @@ using Type = ::FileDialog::internal::Type;
 
 #ifndef TDESKTOP_DISABLE_GTK_INTEGRATION
 bool NativeSupported() {
+#ifndef TDESKTOP_FORCE_GTK_FILE_DIALOG
+	return false;
+#endif // TDESKTOP_FORCE_GTK_FILE_DIALOG
 	return Platform::internal::GdkHelperLoaded()
 		&& (Libs::gtk_widget_hide_on_delete != nullptr)
 		&& (Libs::gtk_clipboard_store != nullptr)
@@ -357,7 +363,7 @@ GtkFileDialog::GtkFileDialog(QWidget *parent, const QString &caption, const QStr
 	d.reset(new QGtkDialog(Libs::gtk_file_chooser_dialog_new("", nullptr,
 		GTK_FILE_CHOOSER_ACTION_OPEN,
 		GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-		GTK_STOCK_OK, GTK_RESPONSE_OK, NULL)));
+		GTK_STOCK_OK, GTK_RESPONSE_OK, nullptr)));
 	connect(d.data(), SIGNAL(accept()), this, SLOT(onAccepted()));
 	connect(d.data(), SIGNAL(reject()), this, SLOT(onRejected()));
 

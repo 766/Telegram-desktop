@@ -16,19 +16,20 @@ class InputField;
 class FlatLabel;
 } // namespace Ui
 
+void ShowPhoneBannedError(const QString &phone);
+[[nodiscard]] QString ExtractPhonePrefix(const QString &phone);
+
 class SentCodeField : public Ui::InputField {
 public:
-	SentCodeField(QWidget *parent, const style::InputField &st, Fn<QString()> placeholderFactory = Fn<QString()>(), const QString &val = QString()) : Ui::InputField(parent, st, std::move(placeholderFactory), val) {
-		connect(this, &Ui::InputField::changed, [this] { fix(); });
-	}
+	SentCodeField(
+		QWidget *parent,
+		const style::InputField &st,
+		rpl::producer<QString> placeholder = nullptr,
+		const QString &val = QString());
 
-	void setAutoSubmit(int length, Fn<void()> submitCallback) {
-		_autoSubmitLength = length;
-		_submitCallback = std::move(submitCallback);
-	}
-	void setChangedCallback(Fn<void()> changedCallback) {
-		_changedCallback = std::move(changedCallback);
-	}
+	void setAutoSubmit(int length, Fn<void()> submitCallback);
+	void setChangedCallback(Fn<void()> changedCallback);
+	QString getDigitsOnly() const;
 
 private:
 	void fix();

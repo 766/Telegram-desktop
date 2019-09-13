@@ -8,11 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "profile/profile_block_peer_list.h"
 
 #include "ui/effects/ripple_animation.h"
-#include "ui/widgets/popup_menu.h"
 #include "ui/text_options.h"
+#include "data/data_peer.h"
+#include "main/main_session.h"
 #include "styles/style_profile.h"
 #include "styles/style_widgets.h"
-#include "auth_session.h"
 
 namespace Profile {
 
@@ -50,7 +50,6 @@ void PeerListWidget::visibleTopBottomUpdated(int visibleTop, int visibleBottom) 
 }
 
 void PeerListWidget::paintContents(Painter &p) {
-	auto ms = getms();
 	auto left = getListLeft();
 	auto top = getListTop();
 	auto memberRowWidth = rowWidth();
@@ -59,26 +58,26 @@ void PeerListWidget::paintContents(Painter &p) {
 	auto to = ceilclamp(_visibleBottom - top, _st.height, 0, _items.size());
 	for (auto i = from; i < to; ++i) {
 		auto y = top + i * _st.height;
-		auto selected = (_menuRowIndex >= 0) ? (i == _menuRowIndex) : (_pressed >= 0) ? (i == _pressed) : (i == _selected);
+		auto selected = (_pressed >= 0) ? (i == _pressed) : (i == _selected);
 		auto selectedRemove = selected && _selectedRemove;
 		if (_pressed >= 0 && !_pressedRemove) {
 			selectedRemove = false;
 		}
-		paintItem(p, left, y, _items[i], selected, selectedRemove, ms);
+		paintItem(p, left, y, _items[i], selected, selectedRemove);
 	}
 }
 
-void PeerListWidget::paintItem(Painter &p, int x, int y, Item *item, bool selected, bool selectedKick, TimeMs ms) {
+void PeerListWidget::paintItem(Painter &p, int x, int y, Item *item, bool selected, bool selectedKick) {
 	if (_updateItemCallback) {
 		_updateItemCallback(item);
 	}
 
 	auto memberRowWidth = rowWidth();
 	if (selected) {
-		paintOutlinedRect(p, x, y, memberRowWidth, _st.height);
+		paintItemRect(p, x, y, memberRowWidth, _st.height);
 	}
 	if (auto &ripple = item->ripple) {
-		ripple->paint(p, x + _st.button.outlineWidth, y, width(), ms);
+		ripple->paint(p, x, y, width());
 		if (ripple->empty()) {
 			ripple.reset();
 		}
@@ -122,12 +121,8 @@ void PeerListWidget::paintItem(Painter &p, int x, int y, Item *item, bool select
 	p.drawTextLeft(x + _st.statusPosition.x(), y + _st.statusPosition.y(), width(), item->statusText);
 }
 
-void PeerListWidget::paintOutlinedRect(Painter &p, int x, int y, int w, int h) const {
-	auto outlineWidth = _st.button.outlineWidth;
-	if (outlineWidth) {
-		p.fillRect(rtlrect(x, y, outlineWidth, h, width()), _st.button.outlineFgOver);
-	}
-	p.fillRect(rtlrect(x + outlineWidth, y, w - outlineWidth, h, width()), _st.button.textBgOver);
+void PeerListWidget::paintItemRect(Painter &p, int x, int y, int w, int h) const {
+	p.fillRect(rtlrect(x, y, w, h, width()), _st.button.textBgOver);
 }
 
 void PeerListWidget::mouseMoveEvent(QMouseEvent *e) {
@@ -146,12 +141,12 @@ void PeerListWidget::mousePressEvent(QMouseEvent *e) {
 		auto item = _items[_pressed];
 		if (!item->ripple) {
 			auto memberRowWidth = rowWidth();
-			auto mask = Ui::RippleAnimation::rectMask(QSize(memberRowWidth - _st.button.outlineWidth, _st.height));
+			auto mask = Ui::RippleAnimation::rectMask(QSize(memberRowWidth, _st.height));
 			item->ripple = std::make_unique<Ui::RippleAnimation>(_st.button.ripple, std::move(mask), [this, index = _pressed] {
 				repaintRow(index);
 			});
 		}
-		auto left = getListLeft() + _st.button.outlineWidth;
+		auto left = getListLeft();
 		auto top = getListTop() + _st.height * _pressed;
 		item->ripple->add(e->pos() - QPoint(left, top));
 	}
@@ -179,46 +174,6 @@ void PeerListWidget::mousePressReleased(Qt::MouseButton button) {
 	}
 	setCursor(_selectedRemove ? style::cur_pointer : style::cur_default);
 	repaintSelectedRow();
-}
-
-void PeerListWidget::contextMenuEvent(QContextMenuEvent *e) {
-	if (_menu) {
-		_menu->deleteLater();
-		_menu = nullptr;
-	}
-	if (_menuRowIndex >= 0) {
-		repaintRow(_menuRowIndex);
-		_menuRowIndex = -1;
-	}
-
-	if (e->reason() == QContextMenuEvent::Mouse) {
-		_mousePosition = e->globalPos();
-		updateSelection();
-	}
-
-	_menuRowIndex = _selected;
-	if (_pressButton != Qt::LeftButton) {
-		mousePressReleased(_pressButton);
-	}
-
-	if (_selected < 0 || _selected >= _items.size()) {
-		return;
-	}
-
-	_menu = fillPeerMenu(_items[_selected]->peer);
-	if (_menu) {
-		_menu->setDestroyedCallback(crl::guard(this, [this, menu = _menu] {
-			if (_menu == menu) {
-				_menu = nullptr;
-			}
-			repaintRow(_menuRowIndex);
-			_menuRowIndex = -1;
-			_mousePosition = QCursor::pos();
-			updateSelection();
-		}));
-		_menu->popup(e->globalPos());
-		e->accept();
-	}
 }
 
 void PeerListWidget::enterEventHook(QEvent *e) {

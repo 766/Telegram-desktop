@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "history/history.h"
 #include "history/history_widget.h"
+#include "data/data_session.h"
 #include "mainwidget.h"
 #include "storage/localstorage.h"
 
@@ -44,44 +45,36 @@ Draft::Draft(
 }
 
 void applyPeerCloudDraft(PeerId peerId, const MTPDdraftMessage &draft) {
-	auto history = App::history(peerId);
-	auto textWithTags = TextWithTags {
-		qs(draft.vmessage),
+	const auto history = Auth().data().history(peerId);
+	const auto textWithTags = TextWithTags {
+		qs(draft.vmessage()),
 		ConvertEntitiesToTextTags(
-			draft.has_entities()
-			? TextUtilities::EntitiesFromMTP(draft.ventities.v)
-			: EntitiesInText())
+			TextUtilities::EntitiesFromMTP(
+				draft.ventities().value_or_empty()))
 	};
-	if (history->skipCloudDraft(textWithTags.text, draft.vdate.v)) {
+	auto replyTo = draft.vreply_to_msg_id().value_or_empty();
+	if (history->skipCloudDraft(textWithTags.text, replyTo, draft.vdate().v)) {
 		return;
 	}
-	auto replyTo = draft.has_reply_to_msg_id() ? draft.vreply_to_msg_id.v : MsgId(0);
-	auto cloudDraft = std::make_unique<Draft>(textWithTags, replyTo, MessageCursor(QFIXED_MAX, QFIXED_MAX, QFIXED_MAX), draft.is_no_webpage());
-	cloudDraft->date = draft.vdate.v;
+	auto cloudDraft = std::make_unique<Draft>(
+		textWithTags,
+		replyTo,
+		MessageCursor(QFIXED_MAX, QFIXED_MAX, QFIXED_MAX),
+		draft.is_no_webpage());
+	cloudDraft->date = draft.vdate().v;
 
 	history->setCloudDraft(std::move(cloudDraft));
-	history->createLocalDraftFromCloud();
-	history->updateChatListSortPosition();
-
-	if (auto main = App::main()) {
-		main->applyCloudDraft(history);
-	}
+	history->applyCloudDraft();
 }
 
 void clearPeerCloudDraft(PeerId peerId, TimeId date) {
-	const auto history = App::history(peerId);
-	if (history->skipCloudDraft(QString(), date)) {
+	const auto history = Auth().data().history(peerId);
+	if (history->skipCloudDraft(QString(), MsgId(0), date)) {
 		return;
 	}
 
 	history->clearCloudDraft();
-	history->clearLocalDraft();
-
-	history->updateChatListSortPosition();
-
-	if (auto main = App::main()) {
-		main->applyCloudDraft(history);
-	}
+	history->applyCloudDraft();
 }
 
 } // namespace Data

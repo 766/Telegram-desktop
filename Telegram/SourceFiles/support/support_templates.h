@@ -9,14 +9,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/binary_guard.h"
 
-class AuthSession;
+#include <QtNetwork/QNetworkReply>
+
+namespace Main {
+class Session;
+} // namespace Main
 
 namespace Support {
 namespace details {
 
 struct TemplatesQuestion {
 	QString question;
-	QStringList keys;
+	QStringList originalKeys;
+	QStringList normalizedKeys;
 	QString value;
 };
 
@@ -41,7 +46,7 @@ struct TemplatesIndex {
 
 class Templates : public base::has_weak_ptr {
 public:
-	explicit Templates(not_null<AuthSession*> session);
+	explicit Templates(not_null<Main::Session*> session);
 
 	void reload();
 
@@ -67,23 +72,27 @@ public:
 private:
 	struct Updates;
 
+	void load();
 	void update();
 	void ensureUpdatesCreated();
 	void updateRequestFinished(QNetworkReply *reply);
 	void checkUpdateFinished();
 	void setData(details::TemplatesData &&data);
 
-	not_null<AuthSession*> _session;
+	not_null<Main::Session*> _session;
 
 	details::TemplatesData _data;
 	details::TemplatesIndex _index;
 	rpl::event_stream<QStringList> _errors;
 	base::binary_guard _reading;
 	bool _reloadAfterRead = false;
+	rpl::lifetime _reloadToastSubscription;
 
 	int _maxKeyLength = 0;
 
 	std::unique_ptr<Updates> _updates;
+
+	rpl::lifetime _lifetime;
 
 };
 

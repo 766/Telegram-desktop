@@ -12,17 +12,41 @@ namespace Platform {
 void start();
 void finish();
 
+enum class PermissionStatus {
+	Granted,
+	CanRequest,
+	Denied,
+};
+
+enum class PermissionType {
+	Microphone,
+};
+
+enum class SystemSettingsType {
+	Audio,
+};
+
 void SetWatchingMediaKeys(bool watching);
 bool IsApplicationActive();
+void SetApplicationIcon(const QIcon &icon);
 bool TranslucentWindowsSupported(QPoint globalPosition);
 void StartTranslucentPaint(QPainter &p, QPaintEvent *e);
 void InitOnTopPanel(QWidget *panel);
 void DeInitOnTopPanel(QWidget *panel);
 void ReInitOnTopPanel(QWidget *panel);
 void RegisterCustomScheme();
+PermissionStatus GetPermissionStatus(PermissionType type);
+void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback);
+void OpenSystemSettingsForPermission(PermissionType type);
+bool OpenSystemSettings(SystemSettingsType type);
 
-QString SystemLanguage();
-QString SystemCountry();
+[[nodiscard]] std::optional<crl::time> LastUserInputTime();
+[[nodiscard]] inline bool LastUserInputTimeSupported() {
+	return LastUserInputTime().has_value();
+}
+
+[[nodiscard]] constexpr bool UseMainQueueGeneric();
+void DrainMainQueue(); // Needed only if UseMainQueueGeneric() is false.
 
 namespace ThirdParty {
 

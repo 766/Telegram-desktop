@@ -8,17 +8,32 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "history/history_item_components.h"
+#include "ui/effects/animations.h"
 #include "base/weak_ptr.h"
 
 class SharedMediaWithLastSlice;
 class UserPhotosSlice;
+struct WebPageCollage;
 
 namespace Media {
 namespace View {
 
 class GroupThumbs : public base::has_weak_ptr {
 public:
-	using Key = base::variant<PhotoId, FullMsgId>;
+	struct CollageKey {
+		int index = 0;
+
+		inline bool operator<(const CollageKey &other) const {
+			return index < other.index;
+		}
+	};
+	struct CollageSlice {
+		FullMsgId context;
+		not_null<const WebPageCollage*> data;
+
+		int size() const;
+	};
+	using Key = base::variant<PhotoId, FullMsgId, CollageKey>;
 
 	static void Refresh(
 		std::unique_ptr<GroupThumbs> &instance,
@@ -30,6 +45,11 @@ public:
 		const UserPhotosSlice &slice,
 		int index,
 		int availableWidth);
+	static void Refresh(
+		std::unique_ptr<GroupThumbs> &instance,
+		const CollageSlice &slice,
+		int index,
+		int availableWidth);
 	void clear();
 
 	void resizeToWidth(int newWidth);
@@ -38,7 +58,7 @@ public:
 	bool hidden() const;
 	void checkForAnimationStart();
 
-	void paint(Painter &p, int x, int y, int outerWidth, TimeMs ms);
+	void paint(Painter &p, int x, int y, int outerWidth);
 	ClickHandlerPtr getState(QPoint point) const;
 
 	rpl::producer<QRect> updateRequests() const {
@@ -53,7 +73,10 @@ public:
 		return _lifetime;
 	}
 
-	using Context = base::optional_variant<PeerId, MessageGroupId>;
+	using Context = base::optional_variant<
+		PeerId,
+		MessageGroupId,
+		FullMsgId>;
 
 	GroupThumbs(Context context);
 	~GroupThumbs();
@@ -73,7 +96,11 @@ private:
 	void markCacheStale();
 	not_null<Thumb*> validateCacheEntry(Key key);
 	std::unique_ptr<Thumb> createThumb(Key key);
-	std::unique_ptr<Thumb> createThumb(Key key, ImagePtr image);
+	std::unique_ptr<Thumb> createThumb(
+		Key key,
+		const WebPageCollage &collage,
+		int index);
+	std::unique_ptr<Thumb> createThumb(Key key, Image *image);
 
 	void update();
 	void countUpdatedRect();
@@ -86,7 +113,7 @@ private:
 
 	Context _context;
 	bool _waitingForAnimationStart = true;
-	Animation _animation;
+	Ui::Animations::Simple _animation;
 	std::vector<not_null<Thumb*>> _items;
 	std::vector<not_null<Thumb*>> _dying;
 	base::flat_map<Key, std::unique_ptr<Thumb>> _cache;

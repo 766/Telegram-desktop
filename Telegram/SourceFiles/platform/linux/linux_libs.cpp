@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/linux/linux_libnotify.h"
 #include "platform/linux/linux_desktop_environment.h"
 
+#include <QtGui/QGuiApplication>
+
 namespace Platform {
 namespace Libs {
 namespace {
@@ -106,8 +108,13 @@ bool setupGtkBase(QLibrary &lib_gtk) {
 		// Otherwise we get segfault in Ubuntu 17.04 in gtk_init_check() call.
 		// See https://github.com/telegramdesktop/tdesktop/issues/3176
 		// See https://github.com/telegramdesktop/tdesktop/issues/3162
-		DEBUG_LOG(("Limit allowed GDK backends to x11"));
-		gdk_set_allowed_backends("x11");
+		if(QGuiApplication::platformName().startsWith(qsl("wayland"), Qt::CaseInsensitive)) {
+			DEBUG_LOG(("Limit allowed GDK backends to wayland"));
+			gdk_set_allowed_backends("wayland");
+		} else if (QGuiApplication::platformName() == qsl("xcb")) {
+			DEBUG_LOG(("Limit allowed GDK backends to x11"));
+			gdk_set_allowed_backends("x11");
+		}
 	}
 
 	DEBUG_LOG(("Library gtk functions loaded!"));
@@ -220,11 +227,6 @@ f_g_list_free g_list_free = nullptr;
 f_g_list_free_full g_list_free_full = nullptr;
 f_g_error_free g_error_free = nullptr;
 f_g_slist_free g_slist_free = nullptr;
-#ifndef TDESKTOP_DISABLE_UNITY_INTEGRATION
-f_unity_launcher_entry_set_count unity_launcher_entry_set_count = nullptr;
-f_unity_launcher_entry_set_count_visible unity_launcher_entry_set_count_visible = nullptr;
-f_unity_launcher_entry_get_for_desktop_id unity_launcher_entry_get_for_desktop_id = nullptr;
-#endif // !TDESKTOP_DISABLE_UNITY_INTEGRATION
 #endif // !TDESKTOP_DISABLE_GTK_INTEGRATION
 
 void start() {
@@ -233,15 +235,16 @@ void start() {
 
 	bool gtkLoaded = false;
 	bool indicatorLoaded = false;
+	bool isWayland = QGuiApplication::platformName().startsWith(qsl("wayland"), Qt::CaseInsensitive);
 	QLibrary lib_gtk, lib_indicator;
-	if (loadLibrary(lib_indicator, "appindicator3", 1)) {
+	if (loadLibrary(lib_indicator, "ayatana-appindicator3", 1) || loadLibrary(lib_indicator, "appindicator3", 1)) {
 		if (loadLibrary(lib_gtk, "gtk-3", 0)) {
 			gtkLoaded = setupGtkBase(lib_gtk);
 			indicatorLoaded = setupAppIndicator(lib_indicator);
 		}
 	}
-	if (!gtkLoaded || !indicatorLoaded) {
-		if (loadLibrary(lib_indicator, "appindicator", 1)) {
+	if ((!gtkLoaded || !indicatorLoaded) && !isWayland) {
+		if (loadLibrary(lib_indicator, "ayatana-appindicator", 1) || loadLibrary(lib_indicator, "appindicator", 1)) {
 			if (loadLibrary(lib_gtk, "gtk-x11-2.0", 0)) {
 				gtkLoaded = indicatorLoaded = false;
 				gtkLoaded = setupGtkBase(lib_gtk);
@@ -255,7 +258,7 @@ void start() {
 		if (loadLibrary(lib_gtk, "gtk-3", 0)) {
 			gtkLoaded = setupGtkBase(lib_gtk);
 		}
-		if (!gtkLoaded && loadLibrary(lib_gtk, "gtk-x11-2.0", 0)) {
+		if (!gtkLoaded && !isWayland && loadLibrary(lib_gtk, "gtk-x11-2.0", 0)) {
 			gtkLoaded = setupGtkBase(lib_gtk);
 		}
 	}
@@ -287,17 +290,6 @@ void start() {
 	} else {
 		LOG(("Could not load gtk-x11-2.0!"));
 	}
-
-#ifndef TDESKTOP_DISABLE_UNITY_INTEGRATION
-	if (DesktopEnvironment::TryUnityCounter()) {
-		QLibrary lib_unity(qstr("unity"), 9, 0);
-		loadLibrary(lib_unity, "unity", 9);
-
-		load(lib_unity, "unity_launcher_entry_get_for_desktop_id", unity_launcher_entry_get_for_desktop_id);
-		load(lib_unity, "unity_launcher_entry_set_count", unity_launcher_entry_set_count);
-		load(lib_unity, "unity_launcher_entry_set_count_visible", unity_launcher_entry_set_count_visible);
-	}
-#endif // !TDESKTOP_DISABLE_UNITY_INTEGRATION
 
 	if (gtkLoaded) {
 		startLibNotify();

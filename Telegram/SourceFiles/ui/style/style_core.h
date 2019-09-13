@@ -43,6 +43,9 @@ class ModuleBase {
 public:
 	virtual void start() = 0;
 	virtual void stop() = 0;
+
+	virtual ~ModuleBase() = default;
+
 };
 
 void registerModule(ModuleBase *module);
@@ -50,6 +53,9 @@ void unregisterModule(ModuleBase *module);
 
 // This method is implemented in palette.cpp (codegen).
 bool setPaletteColor(QLatin1String name, uchar r, uchar g, uchar b, uchar a);
+
+[[nodiscard]] QColor EnsureContrast(const QColor &over, const QColor &under);
+void EnsureContrast(ColorData &over, const ColorData &under);
 
 } // namespace internal
 

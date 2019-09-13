@@ -8,8 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/mac/notifications_manager_mac.h"
 
 #include "platform/platform_specific.h"
+#include "platform/platform_info.h"
 #include "platform/mac/mac_utilities.h"
 #include "history/history.h"
+#include "ui/empty_userpic.h"
 #include "mainwindow.h"
 #include "styles/style_window.h"
 
@@ -23,7 +25,7 @@ auto DoNotDisturbEnabled = false;
 auto LastSettingsQueryMs = 0;
 
 void queryDoNotDisturbState() {
-	auto ms = getms(true);
+	auto ms = crl::now();
 	if (LastSettingsQueryMs > 0 && ms <= LastSettingsQueryMs + kQuerySettingsEachMs) {
 		return;
 	}
@@ -141,7 +143,7 @@ bool SkipToast() {
 }
 
 bool Supported() {
-	return (cPlatform() != dbipMacOld);
+	return Platform::IsMac10_8OrGreater();
 }
 
 std::unique_ptr<Window::Notifications::Manager> Create(Window::Notifications::System *system) {
@@ -159,9 +161,16 @@ class Manager::Private : public QObject, private base::Subscriber {
 public:
 	Private(Manager *manager);
 
-	void showNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton);
+	void showNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton);
 	void clearAll();
-	void clearFromHistory(History *history);
+	void clearFromHistory(not_null<History*> history);
 	void updateDelegate();
 
 	~Private();
@@ -207,7 +216,14 @@ Manager::Private::Private(Manager *manager)
 	});
 }
 
-void Manager::Private::showNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton) {
+void Manager::Private::showNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton) {
 	@autoreleasepool {
 
 	NSUserNotification *notification = [[[NSUserNotification alloc] init] autorelease];
@@ -222,7 +238,9 @@ void Manager::Private::showNotification(PeerData *peer, MsgId msgId, const QStri
 	[notification setSubtitle:Q2NSString(subtitle)];
 	[notification setInformativeText:Q2NSString(msg)];
 	if (!hideNameAndPhoto && [notification respondsToSelector:@selector(setContentImage:)]) {
-		auto userpic = peer->genUserpic(st::notifyMacPhotoSize);
+		auto userpic = peer->isSelf()
+			? Ui::EmptyUserpic::GenerateSavedMessages(st::notifyMacPhotoSize)
+			: peer->genUserpic(st::notifyMacPhotoSize);
 		NSImage *img = [qt_mac_create_nsimage(userpic) autorelease];
 		[notification setContentImage:img];
 	}
@@ -303,7 +321,7 @@ void Manager::Private::clearAll() {
 	putClearTask(ClearAll());
 }
 
-void Manager::Private::clearFromHistory(History *history) {
+void Manager::Private::clearFromHistory(not_null<History*> history) {
 	putClearTask(ClearFromHistory { history->peer->id });
 }
 
@@ -328,15 +346,29 @@ Manager::Manager(Window::Notifications::System *system) : NativeManager(system)
 
 Manager::~Manager() = default;
 
-void Manager::doShowNativeNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton) {
-	_private->showNotification(peer, msgId, title, subtitle, msg, hideNameAndPhoto, hideReplyButton);
+void Manager::doShowNativeNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton) {
+	_private->showNotification(
+		peer,
+		msgId,
+		title,
+		subtitle,
+		msg,
+		hideNameAndPhoto,
+		hideReplyButton);
 }
 
 void Manager::doClearAllFast() {
 	_private->clearAll();
 }
 
-void Manager::doClearFromHistory(History *history) {
+void Manager::doClearFromHistory(not_null<History*> history) {
 	_private->clearFromHistory(history);
 }
 

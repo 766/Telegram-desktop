@@ -10,7 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <rpl/never.h>
 #include <rpl/combine.h>
 #include <rpl/range.h>
-#include "window/window_controller.h"
+#include "window/window_session_controller.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/input_fields.h"
 #include "ui/wrap/padding_wrap.h"
@@ -23,8 +23,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/info_section_widget.h"
 #include "info/info_controller.h"
 #include "boxes/peer_list_box.h"
+#include "data/data_session.h"
+#include "main/main_session.h"
 #include "styles/style_info.h"
 #include "styles/style_profile.h"
+
+#include <QtCore/QCoreApplication>
 
 namespace Info {
 
@@ -111,7 +115,7 @@ void ContentWidget::setGeometryWithTopMoved(
 	}
 	if (!willBeResized) {
 		QResizeEvent fake(size(), size());
-		QApplication::sendEvent(this, &fake);
+		QCoreApplication::sendEvent(this, &fake);
 	}
 	_topDelta = 0;
 }
@@ -259,9 +263,9 @@ void ContentWidget::refreshSearchField(bool shown) {
 
 Key ContentMemento::key() const {
 	if (const auto peerId = this->peerId()) {
-		return Key(App::peer(peerId));
-	} else if (const auto feed = this->feed()) {
-		return Key(feed);
+		return Key(Auth().data().peer(peerId));
+	//} else if (const auto feed = this->feed()) { // #feed
+	//	return Key(feed);
 	} else {
 		return Settings::Tag{ settingsSelf() };
 	}

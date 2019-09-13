@@ -32,7 +32,7 @@ class ConcurrentSender : public base::has_weak_ptr {
 	auto with_instance(Method &&method)
 	-> std::enable_if_t<is_callable_v<Method, not_null<Instance*>>>;
 
-	using DoneHandler = FnMut<void(
+	using DoneHandler = FnMut<bool(
 		mtpRequestId requestId,
 		bytes::const_span result)>;
 	using FailHandler = FnMut<void(
@@ -64,7 +64,7 @@ class ConcurrentSender : public base::has_weak_ptr {
 			SecureRequest &&serialized) noexcept;
 
 		void setToDC(ShiftedDcId dcId) noexcept;
-		void setCanWait(TimeMs ms) noexcept;
+		void setCanWait(crl::time ms) noexcept;
 		template <typename Response, typename InvokeFullDone>
 		void setDoneHandler(InvokeFullDone &&invoke) noexcept;
 		template <typename InvokeFullFail>
@@ -76,7 +76,7 @@ class ConcurrentSender : public base::has_weak_ptr {
 		not_null<ConcurrentSender*> _sender;
 		SecureRequest _serialized;
 		ShiftedDcId _dcId = 0;
-		TimeMs _canWait = 0;
+		crl::time _canWait = 0;
 
 		Handlers _handlers;
 		FailSkipPolicy _failSkipPolicy = FailSkipPolicy::Simple;
@@ -104,7 +104,7 @@ public:
 		[[nodiscard]] SpecificRequestBuilder &toDC(
 			ShiftedDcId dcId) noexcept;
 		[[nodiscard]] SpecificRequestBuilder &afterDelay(
-			TimeMs ms) noexcept;
+			crl::time ms) noexcept;
 
 #ifndef MTP_SENDER_USE_GENERIC_HANDLERS
 		// Allow code completion to show response type.
@@ -206,8 +206,11 @@ void ConcurrentSender::RequestBuilder::setDoneHandler(
 		auto from = reinterpret_cast<const mtpPrime*>(result.data());
 		const auto end = from + result.size() / sizeof(mtpPrime);
 		Response data;
-		data.read(from, end);
+		if (!data.read(from, end)) {
+			return false;
+		}
 		std::move(handler)(requestId, std::move(data));
+		return true;
 	};
 }
 
@@ -235,7 +238,7 @@ auto ConcurrentSender::SpecificRequestBuilder<Request>::toDC(
 
 template <typename Request>
 auto ConcurrentSender::SpecificRequestBuilder<Request>::afterDelay(
-	TimeMs ms
+	crl::time ms
 ) noexcept -> SpecificRequestBuilder & {
 	setCanWait(ms);
 	return *this;

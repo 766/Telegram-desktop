@@ -10,7 +10,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/rsa_public_key.h"
 #include "mtproto/dc_options.h"
 #include "mtproto/auth_key.h"
+#include "base/unixtime.h"
 #include "base/openssl_help.h"
+
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonObject>
 
 extern "C" {
 #include <openssl/aes.h>
@@ -21,12 +26,12 @@ namespace {
 
 struct DnsEntry {
 	QString data;
-	int64 TTL = 0;
+	crl::time TTL = 0;
 };
 
-constexpr auto kSendNextTimeout = TimeMs(1000);
-constexpr auto kMinTimeToLive = 10 * TimeMs(1000);
-constexpr auto kMaxTimeToLive = 300 * TimeMs(1000);
+constexpr auto kSendNextTimeout = crl::time(1000);
+constexpr auto kMinTimeToLive = 10 * crl::time(1000);
+constexpr auto kMaxTimeToLive = 300 * crl::time(1000);
 
 constexpr auto kPublicKey = str_const("\
 -----BEGIN RSA PUBLIC KEY-----\n\
@@ -69,7 +74,32 @@ bool CheckPhoneByPrefixesRules(const QString &phone, const QString &rules) {
 	return result;
 }
 
-std::vector<DnsEntry> ParseDnsResponse(const QByteArray &response) {
+QString GenerateRandomPadding() {
+	constexpr char kValid[] = "abcdefghijklmnopqrstuvwxyz"
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+	auto result = QString();
+	const auto count = [&] {
+		constexpr auto kMinPadding = 13;
+		constexpr auto kMaxPadding = 128;
+		while (true) {
+			const auto result = 1 + (rand_value<uchar>() / 2);
+			Assert(result <= kMaxPadding);
+			if (result >= kMinPadding) {
+				return result;
+			}
+		}
+	}();
+	result.resize(count);
+	for (auto &ch : result) {
+		ch = kValid[rand_value<uchar>() % (sizeof(kValid) - 1)];
+	}
+	return result;
+}
+
+std::vector<DnsEntry> ParseDnsResponse(
+		const QByteArray &bytes,
+		std::optional<int> typeRestriction = std::nullopt) {
 	// Read and store to "result" all the data bytes from the response:
 	// { ..,
 	//   "Answer": [
@@ -77,47 +107,62 @@ std::vector<DnsEntry> ParseDnsResponse(const QByteArray &response) {
 	//     { .., "data": "bytes2", "TTL": int, .. }
 	//   ],
 	// .. }
-	auto result = std::vector<DnsEntry>();
 	auto error = QJsonParseError{ 0, QJsonParseError::NoError };
-	auto document = QJsonDocument::fromJson(response, &error);
+	const auto document = QJsonDocument::fromJson(bytes, &error);
 	if (error.error != QJsonParseError::NoError) {
 		LOG(("Config Error: Failed to parse dns response JSON, error: %1"
 			).arg(error.errorString()));
+		return {};
 	} else if (!document.isObject()) {
 		LOG(("Config Error: Not an object received in dns response JSON."));
-	} else {
-		auto response = document.object();
-		auto answerIt = response.find(qsl("Answer"));
-		if (answerIt == response.constEnd()) {
-			LOG(("Config Error: Could not find Answer "
-				"in dns response JSON."));
-		} else if (!(*answerIt).isArray()) {
-			LOG(("Config Error: Not an array received "
-				"in Answer in dns response JSON."));
-		} else {
-			for (auto elem : (*answerIt).toArray()) {
-				if (!elem.isObject()) {
-					LOG(("Config Error: Not an object found "
-						"in Answer array in dns response JSON."));
-				} else {
-					auto object = elem.toObject();
-					auto dataIt = object.find(qsl("data"));
-					auto ttlIt = object.find(qsl("TTL"));
-					auto ttl = (ttlIt != object.constEnd())
-						? int64(std::round((*ttlIt).toDouble()))
-						: int64(0);
-					if (dataIt == object.constEnd()) {
-						LOG(("Config Error: Could not find data "
-							"in Answer array entry in dns response JSON."));
-					} else if (!(*dataIt).isString()) {
-						LOG(("Config Error: Not a string data found "
-							"in Answer array entry in dns response JSON."));
-					} else {
-						result.push_back({ (*dataIt).toString(), ttl });
-					}
-				}
+		return {};
+	}
+	const auto response = document.object();
+	const auto answerIt = response.find(qsl("Answer"));
+	if (answerIt == response.constEnd()) {
+		LOG(("Config Error: Could not find Answer in dns response JSON."));
+		return {};
+	} else if (!(*answerIt).isArray()) {
+		LOG(("Config Error: Not an array received "
+			"in Answer in dns response JSON."));
+		return {};
+	}
+
+	auto result = std::vector<DnsEntry>();
+	for (const auto elem : (*answerIt).toArray()) {
+		if (!elem.isObject()) {
+			LOG(("Config Error: Not an object found "
+				"in Answer array in dns response JSON."));
+			continue;
+		}
+		const auto object = elem.toObject();
+		if (typeRestriction) {
+			const auto typeIt = object.find(qsl("type"));
+			const auto type = int(std::round((*typeIt).toDouble()));
+			if (!(*typeIt).isDouble()) {
+				LOG(("Config Error: Not a number in type field "
+					"in Answer array in dns response JSON."));
+				continue;
+			} else if (type != *typeRestriction) {
+				continue;
 			}
 		}
+		const auto dataIt = object.find(qsl("data"));
+		if (dataIt == object.constEnd()) {
+			LOG(("Config Error: Could not find data "
+				"in Answer array entry in dns response JSON."));
+			continue;
+		} else if (!(*dataIt).isString()) {
+			LOG(("Config Error: Not a string data found "
+				"in Answer array entry in dns response JSON."));
+			continue;
+		}
+
+		const auto ttlIt = object.find(qsl("TTL"));
+		const auto ttl = (ttlIt != object.constEnd())
+			? crl::time(std::round((*ttlIt).toDouble()))
+			: crl::time(0);
+		result.push_back({ (*dataIt).toString(), ttl });
 	}
 	return result;
 }
@@ -128,6 +173,52 @@ QByteArray ConcatenateDnsTxtFields(const std::vector<DnsEntry> &response) {
 		entries.insertMulti(INT_MAX - entry.data.size(), entry.data);
 	}
 	return QStringList(entries.values()).join(QString()).toLatin1();
+}
+
+[[nodiscard]] QDateTime ParseHttpDate(const QString &date) {
+	// Wed, 10 Jul 2019 14:33:38 GMT
+	static const auto expression = QRegularExpression(
+		R"(\w\w\w, (\d\d) (\w\w\w) (\d\d\d\d) (\d\d):(\d\d):(\d\d) GMT)");
+	const auto match = expression.match(date);
+	if (!match.hasMatch()) {
+		return QDateTime();
+	}
+
+	const auto number = [&](int index) {
+		return match.capturedRef(index).toInt();
+	};
+	const auto day = number(1);
+	const auto month = [&] {
+		static const auto months = {
+			"Jan",
+			"Feb",
+			"Mar",
+			"Apr",
+			"May",
+			"Jun",
+			"Jul",
+			"Aug",
+			"Sep",
+			"Oct",
+			"Nov",
+			"Dec"
+		};
+		const auto captured = match.capturedRef(2);
+		for (auto i = begin(months); i != end(months); ++i) {
+			if (captured == (*i)) {
+				return 1 + int(i - begin(months));
+			}
+		}
+		return 0;
+	}();
+	const auto year = number(3);
+	const auto hour = number(4);
+	const auto minute = number(5);
+	const auto second = number(6);
+	return QDateTime(
+		QDate(year, month, day),
+		QTime(hour, minute, second),
+		Qt::UTC);
 }
 
 } // namespace
@@ -172,12 +263,16 @@ SpecialConfigRequest::SpecialConfigRequest(
 		const std::string &ip,
 		int port,
 		bytes::const_span secret)> callback,
+	Fn<void()> timeDoneCallback,
 	const QString &phone)
 : _callback(std::move(callback))
+, _timeDoneCallback(std::move(timeDoneCallback))
 , _phone(phone) {
+	Expects((_callback == nullptr) != (_timeDoneCallback == nullptr));
+
 	_manager.setProxy(QNetworkProxy::NoProxy);
 	_attempts = {
-		{ Type::App, qsl("software-download.microsoft.com") },
+		//{ Type::App, qsl("software-download.microsoft.com") },
 	};
 	for (const auto &domain : DnsDomains()) {
 		_attempts.push_back({ Type::Dns, domain });
@@ -185,6 +280,20 @@ SpecialConfigRequest::SpecialConfigRequest(
 	std::random_device rd;
 	ranges::shuffle(_attempts, std::mt19937(rd()));
 	sendNextRequest();
+}
+
+SpecialConfigRequest::SpecialConfigRequest(
+	Fn<void(
+		DcId dcId,
+		const std::string &ip,
+		int port,
+		bytes::const_span secret)> callback,
+	const QString &phone)
+: SpecialConfigRequest(std::move(callback), nullptr, phone) {
+}
+
+SpecialConfigRequest::SpecialConfigRequest(Fn<void()> timeDoneCallback)
+: SpecialConfigRequest(nullptr, std::move(timeDoneCallback), QString()) {
 }
 
 void SpecialConfigRequest::sendNextRequest() {
@@ -207,15 +316,17 @@ void SpecialConfigRequest::performRequest(const Attempt &attempt) {
 	url.setHost(attempt.domain);
 	auto request = QNetworkRequest();
 	switch (type) {
-	case Type::App: {
-		url.setPath(cTestMode()
-			? qsl("/testv2/config.txt")
-			: qsl("/prodv2/config.txt"));
-		request.setRawHeader("Host", "tcdnb.azureedge.net");
-	} break;
+	//case Type::App: {
+	//	url.setPath(cTestMode()
+	//		? qsl("/testv2/config.txt")
+	//		: qsl("/prodv2/config.txt"));
+	//	request.setRawHeader("Host", "tcdnb.azureedge.net");
+	//} break;
 	case Type::Dns: {
 		url.setPath(qsl("/resolve"));
-		url.setQuery(qsl("name=%1&type=16").arg(Global::TxtDomainString()));
+		url.setQuery(qsl("name=%1&type=ANY&random_padding=%2"
+		).arg(Global::TxtDomainString()
+		).arg(GenerateRandomPadding()));
 		request.setRawHeader("Host", "dns.google.com");
 	} break;
 	default: Unexpected("Type in SpecialConfigRequest::performRequest.");
@@ -230,14 +341,50 @@ void SpecialConfigRequest::performRequest(const Attempt &attempt) {
 	});
 }
 
+void SpecialConfigRequest::handleHeaderUnixtime(
+		not_null<QNetworkReply*> reply) {
+	if (reply->error() != QNetworkReply::NoError) {
+		return;
+	}
+	const auto date = QString::fromLatin1([&] {
+		for (const auto &pair : reply->rawHeaderPairs()) {
+			if (pair.first == "Date") {
+				return pair.second;
+			}
+		}
+		return QByteArray();
+	}());
+	if (date.isEmpty()) {
+		LOG(("Config Error: No 'Date' header received."));
+		return;
+	}
+	const auto parsed = ParseHttpDate(date);
+	if (!parsed.isValid()) {
+		LOG(("Config Error: Bad 'Date' header received: %1").arg(date));
+		return;
+	}
+	base::unixtime::http_update(parsed.toTime_t());
+	if (_timeDoneCallback) {
+		_timeDoneCallback();
+	}
+}
+
 void SpecialConfigRequest::requestFinished(
 		Type type,
 		not_null<QNetworkReply*> reply) {
+	handleHeaderUnixtime(reply);
 	const auto result = finalizeRequest(reply);
+	if (!_callback) {
+		return;
+	}
+
 	switch (type) {
-	case Type::App: handleResponse(result); break;
-	case Type::Dns: handleResponse(
-		ConcatenateDnsTxtFields(ParseDnsResponse(result))); break;
+	//case Type::App: handleResponse(result); break;
+	case Type::Dns: {
+		constexpr auto kTypeRestriction = 16; // TXT
+		handleResponse(ConcatenateDnsTxtFields(
+			ParseDnsResponse(result, kTypeRestriction)));
+	} break;
 	default: Unexpected("Type in SpecialConfigRequest::requestFinished.");
 	}
 }
@@ -315,9 +462,7 @@ bool SpecialConfigRequest::decryptSimpleConfig(const QByteArray &bytes) {
 		return false;
 	}
 
-	try {
-		_simpleConfig.read(from, end);
-	} catch (...) {
+	if (!_simpleConfig.read(from, end)) {
 		LOG(("Config Error: Could not read configSimple."));
 		return false;
 	}
@@ -333,26 +478,30 @@ void SpecialConfigRequest::handleResponse(const QByteArray &bytes) {
 		return;
 	}
 	Assert(_simpleConfig.type() == mtpc_help_configSimple);
-	auto &config = _simpleConfig.c_help_configSimple();
-	auto now = unixtime();
-	if (now < config.vdate.v || now > config.vexpires.v) {
-		LOG(("Config Error: Bad date frame for simple config: %1-%2, our time is %3.").arg(config.vdate.v).arg(config.vexpires.v).arg(now));
+	const auto &config = _simpleConfig.c_help_configSimple();
+	const auto now = base::unixtime::http_now();
+	if (now > config.vexpires().v) {
+		LOG(("Config Error: "
+			"Bad date frame for simple config: %1-%2, our time is %3."
+			).arg(config.vdate().v
+			).arg(config.vexpires().v
+			).arg(now));
 		return;
 	}
-	if (config.vrules.v.empty()) {
+	if (config.vrules().v.empty()) {
 		LOG(("Config Error: Empty simple config received."));
 		return;
 	}
-	for (auto &rule : config.vrules.v) {
+	for (const auto &rule : config.vrules().v) {
 		Assert(rule.type() == mtpc_accessPointRule);
-		auto &data = rule.c_accessPointRule();
-		const auto phoneRules = qs(data.vphone_prefix_rules);
+		const auto &data = rule.c_accessPointRule();
+		const auto phoneRules = qs(data.vphone_prefix_rules());
 		if (!CheckPhoneByPrefixesRules(_phone, phoneRules)) {
 			continue;
 		}
 
-		const auto dcId = data.vdc_id.v;
-		for (const auto &address : data.vips.v) {
+		const auto dcId = data.vdc_id().v;
+		for (const auto &address : data.vips().v) {
 			const auto parseIp = [](const MTPint &ipv4) {
 				const auto ip = *reinterpret_cast<const uint32*>(&ipv4.v);
 				return qsl("%1.%2.%3.%4"
@@ -364,15 +513,15 @@ void SpecialConfigRequest::handleResponse(const QByteArray &bytes) {
 			switch (address.type()) {
 			case mtpc_ipPort: {
 				const auto &fields = address.c_ipPort();
-				_callback(dcId, parseIp(fields.vipv4), fields.vport.v, {});
+				_callback(dcId, parseIp(fields.vipv4()), fields.vport().v, {});
 			} break;
 			case mtpc_ipPortSecret: {
 				const auto &fields = address.c_ipPortSecret();
 				_callback(
 					dcId,
-					parseIp(fields.vipv4),
-					fields.vport.v,
-					bytes::make_span(fields.vsecret.v));
+					parseIp(fields.vipv4()),
+					fields.vport().v,
+					bytes::make_span(fields.vsecret().v));
 			} break;
 			default: Unexpected("Type in simpleConfig ips.");
 			}
@@ -383,7 +532,7 @@ void SpecialConfigRequest::handleResponse(const QByteArray &bytes) {
 DomainResolver::DomainResolver(Fn<void(
 	const QString &host,
 	const QStringList &ips,
-	TimeMs expireAt)> callback)
+	crl::time expireAt)> callback)
 : _callback(std::move(callback)) {
 	_manager.setProxy(QNetworkProxy::NoProxy);
 }
@@ -400,7 +549,7 @@ void DomainResolver::resolve(const AttemptKey &key) {
 		return;
 	}
 	const auto i = _cache.find(key);
-	_lastTimestamp = getms(true);
+	_lastTimestamp = crl::now();
 	if (i != end(_cache) && i->second.expireAt > _lastTimestamp) {
 		checkExpireAndPushResult(key.domain);
 		return;
@@ -408,7 +557,7 @@ void DomainResolver::resolve(const AttemptKey &key) {
 	auto hosts = DnsDomains();
 	std::random_device rd;
 	ranges::shuffle(hosts, std::mt19937(rd()));
-	_attempts.emplace(key, std::move(hosts));
+	_attempts.emplace(key, Attempts{ std::move(hosts) });
 	sendNextRequest(key);
 }
 
@@ -433,12 +582,13 @@ void DomainResolver::sendNextRequest(const AttemptKey &key) {
 	if (i == end(_attempts)) {
 		return;
 	}
-	auto &hosts = i->second;
+	auto &attempts = i->second;
+	auto &hosts = attempts.hosts;
 	const auto host = hosts.back();
 	hosts.pop_back();
 
 	if (!hosts.empty()) {
-		App::CallDelayed(kSendNextTimeout, this, [=] {
+		App::CallDelayed(kSendNextTimeout, &attempts.guard, [=] {
 			sendNextRequest(key);
 		});
 	}
@@ -485,10 +635,10 @@ void DomainResolver::requestFinished(
 	for (const auto &item : response) {
 		entry.ips.push_back(item.data);
 		accumulate_min(ttl, std::max(
-			item.TTL * TimeMs(1000),
+			item.TTL * crl::time(1000),
 			kMinTimeToLive));
 	}
-	_lastTimestamp = getms(true);
+	_lastTimestamp = crl::now();
 	entry.expireAt = _lastTimestamp + ttl;
 	_cache[key] = std::move(entry);
 

@@ -54,15 +54,18 @@ class Sender {
 			DoneHandler(not_null<Sender*> sender, Callback handler) : _sender(sender), _handler(std::move(handler)) {
 			}
 
-			void operator()(mtpRequestId requestId, const mtpPrime *from, const mtpPrime *end) override {
+			bool operator()(mtpRequestId requestId, const mtpPrime *from, const mtpPrime *end) override {
 				auto handler = std::move(_handler);
 				_sender->senderRequestHandled(requestId);
 
+				auto result = Response();
+				if (!result.read(from, end)) {
+					return false;
+				}
 				if (handler) {
-					auto result = Response();
-					result.read(from, end);
 					Policy::handle(std::move(handler), requestId, std::move(result));
 				}
+				return true;
 			}
 
 		private:
@@ -130,7 +133,7 @@ class Sender {
 		void setToDC(ShiftedDcId dcId) noexcept {
 			_dcId = dcId;
 		}
-		void setCanWait(TimeMs ms) noexcept {
+		void setCanWait(crl::time ms) noexcept {
 			_canWait = ms;
 		}
 		void setDoneHandler(RPCDoneHandlerPtr &&handler) noexcept {
@@ -152,7 +155,7 @@ class Sender {
 		ShiftedDcId takeDcId() const noexcept {
 			return _dcId;
 		}
-		TimeMs takeCanWait() const noexcept {
+		crl::time takeCanWait() const noexcept {
 			return _canWait;
 		}
 		RPCDoneHandlerPtr takeOnDone() noexcept {
@@ -180,7 +183,7 @@ class Sender {
 	private:
 		not_null<Sender*> _sender;
 		ShiftedDcId _dcId = 0;
-		TimeMs _canWait = 0;
+		crl::time _canWait = 0;
 		RPCDoneHandlerPtr _done;
 		base::variant<FailPlainHandler, FailRequestIdHandler> _fail;
 		FailSkipPolicy _failSkipPolicy = FailSkipPolicy::Simple;
@@ -205,7 +208,7 @@ public:
 			setToDC(dcId);
 			return *this;
 		}
-		[[nodiscard]] SpecificRequestBuilder &afterDelay(TimeMs ms) noexcept {
+		[[nodiscard]] SpecificRequestBuilder &afterDelay(crl::time ms) noexcept {
 			setCanWait(ms);
 			return *this;
 		}

@@ -15,8 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_download.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
+#include "ui/image/image.h"
 #include "mainwidget.h"
-#include "auth_session.h"
+#include "main/main_session.h"
 
 namespace InlineBots {
 namespace {
@@ -24,9 +25,9 @@ namespace {
 QString GetContentUrl(const MTPWebDocument &document) {
 	switch (document.type()) {
 	case mtpc_webDocument:
-		return qs(document.c_webDocument().vurl);
+		return qs(document.c_webDocument().vurl());
 	case mtpc_webDocumentNoProxy:
-		return qs(document.c_webDocumentNoProxy().vurl);
+		return qs(document.c_webDocumentNoProxy().vurl());
 	}
 	Unexpected("Type in GetContentUrl.");
 }
@@ -58,8 +59,8 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 	auto getInlineResultType = [](const MTPBotInlineResult &inlineResult) -> Type {
 		QString type;
 		switch (inlineResult.type()) {
-		case mtpc_botInlineResult: type = qs(inlineResult.c_botInlineResult().vtype); break;
-		case mtpc_botInlineMediaResult: type = qs(inlineResult.c_botInlineMediaResult().vtype); break;
+		case mtpc_botInlineResult: type = qs(inlineResult.c_botInlineResult().vtype()); break;
+		case mtpc_botInlineMediaResult: type = qs(inlineResult.c_botInlineMediaResult().vtype()); break;
 		}
 		return stringToTypeMap->value(type, Type::Unknown);
 	};
@@ -73,43 +74,44 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 	switch (mtpData.type()) {
 	case mtpc_botInlineResult: {
 		const auto &r = mtpData.c_botInlineResult();
-		result->_id = qs(r.vid);
-		if (r.has_title()) result->_title = qs(r.vtitle);
-		if (r.has_description()) result->_description = qs(r.vdescription);
-		if (r.has_url()) result->_url = qs(r.vurl);
-		if (r.has_thumb()) {
-			result->_thumb = ImagePtr(r.vthumb, result->thumbBox());
+		result->_id = qs(r.vid());
+		result->_title = qs(r.vtitle().value_or_empty());
+		result->_description = qs(r.vdescription().value_or_empty());
+		result->_url = qs(r.vurl().value_or_empty());
+		if (const auto thumb = r.vthumb()) {
+			result->_thumb = Images::Create(*thumb, result->thumbBox());
 		}
-		if (r.has_content()) {
-			result->_content_url = GetContentUrl(r.vcontent);
+		if (const auto content = r.vcontent()) {
+			result->_content_url = GetContentUrl(*content);
 			if (result->_type == Type::Photo) {
 				result->_photo = Auth().data().photoFromWeb(
-					r.vcontent,
-					result->_thumb);
+					*content,
+					result->_thumb,
+					true);
 			} else {
 				result->_document = Auth().data().documentFromWeb(
-					result->adjustAttributes(r.vcontent),
+					result->adjustAttributes(*content),
 					result->_thumb);
 			}
 		}
-		message = &r.vsend_message;
+		message = &r.vsend_message();
 	} break;
 	case mtpc_botInlineMediaResult: {
 		const auto &r = mtpData.c_botInlineMediaResult();
-		result->_id = qs(r.vid);
-		if (r.has_title()) result->_title = qs(r.vtitle);
-		if (r.has_description()) result->_description = qs(r.vdescription);
-		if (r.has_photo()) {
-			result->_photo = Auth().data().photo(r.vphoto);
+		result->_id = qs(r.vid());
+		result->_title = qs(r.vtitle().value_or_empty());
+		result->_description = qs(r.vdescription().value_or_empty());
+		if (const auto photo = r.vphoto()) {
+			result->_photo = Auth().data().processPhoto(*photo);
 		}
-		if (r.has_document()) {
-			result->_document = Auth().data().document(r.vdocument);
+		if (const auto document = r.vdocument()) {
+			result->_document = Auth().data().processDocument(*document);
 		}
-		message = &r.vsend_message;
+		message = &r.vsend_message();
 	} break;
 	}
-	auto badAttachment = (result->_photo && result->_photo->full->isNull())
-		|| (result->_document && !result->_document->isValid());
+	auto badAttachment = (result->_photo && result->_photo->isNull())
+		|| (result->_document && result->_document->isNull());
 
 	if (!message) {
 		return nullptr;
@@ -132,35 +134,42 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 
 	switch (message->type()) {
 	case mtpc_botInlineMessageMediaAuto: {
-		auto &r = message->c_botInlineMessageMediaAuto();
-		auto entities = r.has_entities()
-			? TextUtilities::EntitiesFromMTP(r.ventities.v)
-			: EntitiesInText();
+		const auto &r = message->c_botInlineMessageMediaAuto();
+		const auto message = qs(r.vmessage());
+		const auto entities = TextUtilities::EntitiesFromMTP(
+			r.ventities().value_or_empty());
 		if (result->_type == Type::Photo) {
 			if (!result->_photo) {
 				return nullptr;
 			}
-			result->sendData = std::make_unique<internal::SendPhoto>(result->_photo, qs(r.vmessage), entities);
+			result->sendData = std::make_unique<internal::SendPhoto>(
+				result->_photo,
+				message,
+				entities);
 		} else if (result->_type == Type::Game) {
 			result->createGame();
-			result->sendData = std::make_unique<internal::SendGame>(result->_game);
+			result->sendData = std::make_unique<internal::SendGame>(
+				result->_game);
 		} else {
 			if (!result->_document) {
 				return nullptr;
 			}
-			result->sendData = std::make_unique<internal::SendFile>(result->_document, qs(r.vmessage), entities);
+			result->sendData = std::make_unique<internal::SendFile>(
+				result->_document,
+				message,
+				entities);
 		}
-		if (r.has_reply_markup()) {
-			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(r.vreply_markup);
+		if (const auto markup = r.vreply_markup()) {
+			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(*markup);
 		}
 	} break;
 
 	case mtpc_botInlineMessageText: {
-		auto &r = message->c_botInlineMessageText();
-		auto entities = r.has_entities()
-			? TextUtilities::EntitiesFromMTP(r.ventities.v)
-			: EntitiesInText();
-		result->sendData = std::make_unique<internal::SendText>(qs(r.vmessage), entities, r.is_no_webpage());
+		const auto &r = message->c_botInlineMessageText();
+		result->sendData = std::make_unique<internal::SendText>(
+			qs(r.vmessage()),
+			TextUtilities::EntitiesFromMTP(r.ventities().value_or_empty()),
+			r.is_no_webpage());
 		if (result->_type == Type::Photo) {
 			if (!result->_photo) {
 				return nullptr;
@@ -174,41 +183,41 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 				return nullptr;
 			}
 		}
-		if (r.has_reply_markup()) {
-			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(r.vreply_markup);
+		if (const auto markup = r.vreply_markup()) {
+			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(*markup);
 		}
 	} break;
 
 	case mtpc_botInlineMessageMediaGeo: {
 		// #TODO layer 72 save period and send live location?..
 		auto &r = message->c_botInlineMessageMediaGeo();
-		if (r.vgeo.type() == mtpc_geoPoint) {
-			result->sendData = std::make_unique<internal::SendGeo>(r.vgeo.c_geoPoint());
+		if (r.vgeo().type() == mtpc_geoPoint) {
+			result->sendData = std::make_unique<internal::SendGeo>(r.vgeo().c_geoPoint());
 		} else {
 			badAttachment = true;
 		}
-		if (r.has_reply_markup()) {
-			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(r.vreply_markup);
+		if (const auto markup = r.vreply_markup()) {
+			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(*markup);
 		}
 	} break;
 
 	case mtpc_botInlineMessageMediaVenue: {
 		auto &r = message->c_botInlineMessageMediaVenue();
-		if (r.vgeo.type() == mtpc_geoPoint) {
-			result->sendData = std::make_unique<internal::SendVenue>(r.vgeo.c_geoPoint(), qs(r.vvenue_id), qs(r.vprovider), qs(r.vtitle), qs(r.vaddress));
+		if (r.vgeo().type() == mtpc_geoPoint) {
+			result->sendData = std::make_unique<internal::SendVenue>(r.vgeo().c_geoPoint(), qs(r.vvenue_id()), qs(r.vprovider()), qs(r.vtitle()), qs(r.vaddress()));
 		} else {
 			badAttachment = true;
 		}
-		if (r.has_reply_markup()) {
-			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(r.vreply_markup);
+		if (const auto markup = r.vreply_markup()) {
+			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(*markup);
 		}
 	} break;
 
 	case mtpc_botInlineMessageMediaContact: {
 		auto &r = message->c_botInlineMessageMediaContact();
-		result->sendData = std::make_unique<internal::SendContact>(qs(r.vfirst_name), qs(r.vlast_name), qs(r.vphone_number));
-		if (r.has_reply_markup()) {
-			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(r.vreply_markup);
+		result->sendData = std::make_unique<internal::SendContact>(qs(r.vfirst_name()), qs(r.vlast_name()), qs(r.vphone_number()));
+		if (const auto markup = r.vreply_markup()) {
+			result->_mtpKeyboard = std::make_unique<MTPReplyMarkup>(*markup);
 		}
 	} break;
 
@@ -221,18 +230,21 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 		return nullptr;
 	}
 
-	LocationCoords location;
-	if (result->getLocationCoords(&location)) {
-		int32 w = st::inlineThumbSize, h = st::inlineThumbSize;
-		int32 zoom = 13, scale = 1;
-		if (cScale() == dbisTwo || cRetina()) {
-			scale = 2;
-			w /= 2;
-			h /= 2;
-		}
-		auto coords = location.latAsString() + ',' + location.lonAsString();
-		QString url = qsl("https://maps.googleapis.com/maps/api/staticmap?center=") + coords + qsl("&zoom=%1&size=%2x%3&maptype=roadmap&scale=%4&markers=color:red|size:big|").arg(zoom).arg(w).arg(h).arg(scale) + coords + qsl("&sensor=false");
-		result->_locationThumb = ImagePtr(url);
+	if (const auto point = result->getLocationPoint()) {
+		const auto scale = 1 + (cScale() * cIntRetinaFactor()) / 200;
+		const auto zoom = 15 + (scale - 1);
+		const auto w = st::inlineThumbSize / scale;
+		const auto h = st::inlineThumbSize / scale;
+
+		auto location = GeoPointLocation();
+		location.lat = point->lat();
+		location.lon = point->lon();
+		location.access = point->accessHash();
+		location.width = w;
+		location.height = h;
+		location.zoom = zoom;
+		location.scale = scale;
+		result->_locationThumb = Images::Create(location);
 	}
 
 	return result;
@@ -240,11 +252,10 @@ std::unique_ptr<Result> Result::create(uint64 queryId, const MTPBotInlineResult 
 
 bool Result::onChoose(Layout::ItemBase *layout) {
 	if (_photo && _type == Type::Photo) {
-		if (_photo->medium->loaded() || _photo->thumb->loaded()) {
+		if (_photo->thumbnail()->loaded()) {
 			return true;
-		} else if (!_photo->medium->loading()) {
-			_photo->thumb->loadEvenCancelled(Data::FileOrigin());
-			_photo->medium->loadEvenCancelled(Data::FileOrigin());
+		} else if (!_photo->thumbnail()->loading()) {
+			_photo->thumbnail()->loadEvenCancelled(Data::FileOrigin());
 		}
 		return false;
 	}
@@ -260,11 +271,9 @@ bool Result::onChoose(Layout::ItemBase *layout) {
 			} else if (_document->loading()) {
 				_document->cancel();
 			} else {
-				DocumentOpenClickHandler::Open(
+				_document->save(
 					Data::FileOriginSavedGifs(),
-					_document,
-					nullptr,
-					ActionOnLoadNone);
+					QString());
 			}
 			return false;
 		}
@@ -273,13 +282,12 @@ bool Result::onChoose(Layout::ItemBase *layout) {
 	return true;
 }
 
-void Result::forget() {
-	_thumb->forget();
+void Result::unload() {
 	if (_document) {
-		_document->forget();
+		_document->unload();
 	}
 	if (_photo) {
-		_photo->forget();
+		_photo->unload();
 	}
 }
 
@@ -312,23 +320,43 @@ bool Result::hasThumbDisplay() const {
 	return false;
 };
 
-void Result::addToHistory(History *history, MTPDmessage::Flags flags, MsgId msgId, UserId fromId, MTPint mtpDate, UserId viaBotId, MsgId replyToId, const QString &postAuthor) const {
-	flags |= MTPDmessage_ClientFlag::f_from_inline_bot;
+void Result::addToHistory(
+		History *history,
+		MTPDmessage::Flags flags,
+		MTPDmessage_ClientFlags clientFlags,
+		MsgId msgId,
+		UserId fromId,
+		MTPint mtpDate,
+		UserId viaBotId,
+		MsgId replyToId,
+		const QString &postAuthor) const {
+	clientFlags |= MTPDmessage_ClientFlag::f_from_inline_bot;
 
-	MTPReplyMarkup markup = MTPnullMarkup;
+	auto markup = MTPReplyMarkup();
 	if (_mtpKeyboard) {
 		flags |= MTPDmessage::Flag::f_reply_markup;
 		markup = *_mtpKeyboard;
 	}
-	sendData->addToHistory(this, history, flags, msgId, fromId, mtpDate, viaBotId, replyToId, postAuthor, markup);
+	sendData->addToHistory(
+		this,
+		history,
+		flags,
+		clientFlags,
+		msgId,
+		fromId,
+		mtpDate,
+		viaBotId,
+		replyToId,
+		postAuthor,
+		markup);
 }
 
 QString Result::getErrorOnSend(History *history) const {
 	return sendData->getErrorOnSend(this, history);
 }
 
-bool Result::getLocationCoords(LocationCoords *outLocation) const {
-	return sendData->getLocationCoords(outLocation);
+std::optional<Data::LocationPoint> Result::getLocationPoint() const {
+	return sendData->getLocationPoint();
 }
 
 QString Result::getLayoutTitle() const {
@@ -366,20 +394,20 @@ MTPWebDocument Result::adjustAttributes(const MTPWebDocument &document) {
 	case mtpc_webDocument: {
 		const auto &data = document.c_webDocument();
 		return MTP_webDocument(
-			data.vurl,
-			data.vaccess_hash,
-			data.vsize,
-			data.vmime_type,
-			adjustAttributes(data.vattributes, data.vmime_type));
+			data.vurl(),
+			data.vaccess_hash(),
+			data.vsize(),
+			data.vmime_type(),
+			adjustAttributes(data.vattributes(), data.vmime_type()));
 	} break;
 
 	case mtpc_webDocumentNoProxy: {
 		const auto &data = document.c_webDocumentNoProxy();
 		return MTP_webDocumentNoProxy(
-			data.vurl,
-			data.vsize,
-			data.vmime_type,
-			adjustAttributes(data.vattributes, data.vmime_type));
+			data.vurl(),
+			data.vsize(),
+			data.vmime_type(),
+			adjustAttributes(data.vattributes(), data.vmime_type()));
 	} break;
 	}
 	Unexpected("Type in InlineBots::Result::adjustAttributes.");
@@ -418,19 +446,19 @@ MTPVector<MTPDocumentAttribute> Result::adjustAttributes(
 				// We always treat audio/ogg as a voice message.
 				// It was that way before we started to get attributes here.
 				const auto &fields = audio->c_documentAttributeAudio();
-				if (!(fields.vflags.v & Flag::f_voice)) {
+				if (!(fields.vflags().v & Flag::f_voice)) {
 					*audio = MTP_documentAttributeAudio(
-						MTP_flags(fields.vflags.v | Flag::f_voice),
-						fields.vduration,
-						fields.vtitle,
-						fields.vperformer,
-						fields.vwaveform);
+						MTP_flags(fields.vflags().v | Flag::f_voice),
+						fields.vduration(),
+						MTP_bytes(fields.vtitle().value_or_empty()),
+						MTP_bytes(fields.vperformer().value_or_empty()),
+						MTP_bytes(fields.vwaveform().value_or_empty()));
 				}
 			}
 
 			const auto &fields = audio->c_documentAttributeAudio();
 			if (!exists(mtpc_documentAttributeFilename)
-				&& !(fields.vflags.v & Flag::f_voice)) {
+				&& !(fields.vflags().v & Flag::f_voice)) {
 				const auto p = Core::MimeTypeForName(mime).globPatterns();
 				auto pattern = p.isEmpty() ? QString() : p.front();
 				const auto extension = pattern.isEmpty()

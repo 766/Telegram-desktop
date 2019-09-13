@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_indexed_list.h"
 
-#include "auth_session.h"
+#include "main/main_session.h"
 #include "data/data_session.h"
 #include "history/history.h"
 
@@ -23,14 +23,12 @@ RowsByLetter IndexedList::addToEnd(Key key) {
 	RowsByLetter result;
 	if (!_list.contains(key)) {
 		result.emplace(0, _list.addToEnd(key));
-		for (auto ch : key.entry()->chatsListFirstLetters()) {
+		for (const auto ch : key.entry()->chatListFirstLetters()) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
-				j = _index.emplace(
-					ch,
-					std::make_unique<List>(_sortMode)).first;
+				j = _index.emplace(ch, _sortMode).first;
 			}
-			result.emplace(ch, j->second->addToEnd(key));
+			result.emplace(ch, j->second.addToEnd(key));
 		}
 	}
 	return result;
@@ -41,26 +39,24 @@ Row *IndexedList::addByName(Key key) {
 		return row;
 	}
 
-	Row *result = _list.addByName(key);
-	for (auto ch : key.entry()->chatsListFirstLetters()) {
+	const auto result = _list.addByName(key);
+	for (const auto ch : key.entry()->chatListFirstLetters()) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
-			j = _index.emplace(
-				ch,
-				std::make_unique<List>(_sortMode)).first;
+			j = _index.emplace(ch, _sortMode).first;
 		}
-		j->second->addByName(key);
+		j->second.addByName(key);
 	}
 	return result;
 }
 
-void IndexedList::adjustByPos(const RowsByLetter &links) {
-	for (auto [ch, row] : links) {
+void IndexedList::adjustByDate(const RowsByLetter &links) {
+	for (const auto [ch, row] : links) {
 		if (ch == QChar(0)) {
-			_list.adjustByPos(row);
+			_list.adjustByDate(row);
 		} else {
 			if (auto it = _index.find(ch); it != _index.cend()) {
-				it->second->adjustByPos(row);
+				it->second.adjustByDate(row);
 			}
 		}
 	}
@@ -68,9 +64,9 @@ void IndexedList::adjustByPos(const RowsByLetter &links) {
 
 void IndexedList::moveToTop(Key key) {
 	if (_list.moveToTop(key)) {
-		for (auto ch : key.entry()->chatsListFirstLetters()) {
+		for (const auto ch : key.entry()->chatListFirstLetters()) {
 			if (auto it = _index.find(ch); it != _index.cend()) {
-				it->second->moveToTop(key);
+				it->second.moveToTop(key);
 			}
 		}
 	}
@@ -85,7 +81,7 @@ void IndexedList::movePinned(Row *row, int deltaSign) {
 		Assert(swapPinnedIndexWith != cbegin());
 		--swapPinnedIndexWith;
 	}
-	Auth().data().reorderTwoPinnedDialogs(
+	Auth().data().reorderTwoPinnedChats(
 		row->key(),
 		(*swapPinnedIndexWith)->key());
 }
@@ -95,7 +91,7 @@ void IndexedList::peerNameChanged(
 		const base::flat_set<QChar> &oldLetters) {
 	Expects(_sortMode != SortMode::Date);
 
-	if (const auto history = App::historyLoaded(peer)) {
+	if (const auto history = peer->owner().historyLoaded(peer)) {
 		if (_sortMode == SortMode::Name) {
 			adjustByName(history, oldLetters);
 		} else {
@@ -110,7 +106,7 @@ void IndexedList::peerNameChanged(
 		const base::flat_set<QChar> &oldLetters) {
 	Expects(_sortMode == SortMode::Date);
 
-	if (const auto history = App::historyLoaded(peer)) {
+	if (const auto history = peer->owner().historyLoaded(peer)) {
 		adjustNames(list, history, oldLetters);
 	}
 }
@@ -118,36 +114,36 @@ void IndexedList::peerNameChanged(
 void IndexedList::adjustByName(
 		Key key,
 		const base::flat_set<QChar> &oldLetters) {
+	Expects(_sortMode == SortMode::Name);
+
 	const auto mainRow = _list.adjustByName(key);
 	if (!mainRow) return;
 
 	auto toRemove = oldLetters;
 	auto toAdd = base::flat_set<QChar>();
-	for (auto ch : key.entry()->chatsListFirstLetters()) {
+	for (const auto ch : key.entry()->chatListFirstLetters()) {
 		auto j = toRemove.find(ch);
 		if (j == toRemove.cend()) {
 			toAdd.insert(ch);
 		} else {
 			toRemove.erase(j);
 			if (auto it = _index.find(ch); it != _index.cend()) {
-				it->second->adjustByName(key);
+				it->second.adjustByName(key);
 			}
 		}
 	}
 	for (auto ch : toRemove) {
 		if (auto it = _index.find(ch); it != _index.cend()) {
-			it->second->del(key, mainRow);
+			it->second.del(key, mainRow);
 		}
 	}
 	if (!toAdd.empty()) {
 		for (auto ch : toAdd) {
 			auto j = _index.find(ch);
 			if (j == _index.cend()) {
-				j = _index.emplace(
-					ch,
-					std::make_unique<List>(_sortMode)).first;
+				j = _index.emplace(ch, _sortMode).first;
 			}
-			j->second->addByName(key);
+			j->second.addByName(key);
 		}
 	}
 }
@@ -162,7 +158,7 @@ void IndexedList::adjustNames(
 
 	auto toRemove = oldLetters;
 	auto toAdd = base::flat_set<QChar>();
-	for (auto ch : key.entry()->chatsListFirstLetters()) {
+	for (const auto ch : key.entry()->chatListFirstLetters()) {
 		auto j = toRemove.find(ch);
 		if (j == toRemove.cend()) {
 			toAdd.insert(ch);
@@ -175,17 +171,15 @@ void IndexedList::adjustNames(
 			history->removeChatListEntryByLetter(list, ch);
 		}
 		if (auto it = _index.find(ch); it != _index.cend()) {
-			it->second->del(key, mainRow);
+			it->second.del(key, mainRow);
 		}
 	}
 	for (auto ch : toAdd) {
 		auto j = _index.find(ch);
 		if (j == _index.cend()) {
-			j = _index.emplace(
-				ch,
-				std::make_unique<List>(_sortMode)).first;
+			j = _index.emplace(ch, _sortMode).first;
 		}
-		auto row = j->second->addToEnd(key);
+		auto row = j->second.addToEnd(key);
 		if (_sortMode == SortMode::Date) {
 			history->addChatListEntryByLetter(list, ch, row);
 		}
@@ -194,9 +188,9 @@ void IndexedList::adjustNames(
 
 void IndexedList::del(Key key, Row *replacedBy) {
 	if (_list.del(key, replacedBy)) {
-		for (auto ch : key.entry()->chatsListFirstLetters()) {
+		for (const auto ch : key.entry()->chatListFirstLetters()) {
 			if (auto it = _index.find(ch); it != _index.cend()) {
-				it->second->del(key, replacedBy);
+				it->second.del(key, replacedBy);
 			}
 		}
 	}
@@ -204,6 +198,56 @@ void IndexedList::del(Key key, Row *replacedBy) {
 
 void IndexedList::clear() {
 	_index.clear();
+}
+
+std::vector<not_null<Row*>> IndexedList::filtered(
+		const QStringList &words) const {
+	const auto minimal = [&]() -> const Dialogs::List* {
+		if (empty()) {
+			return nullptr;
+		}
+		auto result = (const Dialogs::List*)nullptr;
+		for (const auto &word : words) {
+			if (word.isEmpty()) {
+				continue;
+			}
+			const auto found = filtered(word[0]);
+			if (!found || found->empty()) {
+				return nullptr;
+			} else if (!result || result->size() > found->size()) {
+				result = found;
+			}
+		}
+		return result;
+	}();
+	auto result = std::vector<not_null<Row*>>();
+	if (!minimal || minimal->empty()) {
+		return result;
+	}
+	result.reserve(minimal->size());
+	for (const auto row : *minimal) {
+		const auto &nameWords = row->entry()->chatListNameWords();
+		const auto found = [&](const QString &word) {
+			for (const auto &name : nameWords) {
+				if (name.startsWith(word)) {
+					return true;
+				}
+			}
+			return false;
+		};
+		const auto allFound = [&] {
+			for (const auto &word : words) {
+				if (!found(word)) {
+					return false;
+				}
+			}
+			return true;
+		}();
+		if (allFound) {
+			result.push_back(row);
+		}
+	}
+	return result;
 }
 
 IndexedList::~IndexedList() {

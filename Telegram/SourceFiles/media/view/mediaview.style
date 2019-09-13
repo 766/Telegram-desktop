@@ -16,9 +16,10 @@ mediaviewPlayback: MediaSlider {
 	activeFg: mediaviewPlaybackActive;
 	inactiveFg: mediaviewPlaybackInactive;
 	activeFgOver: mediaviewPlaybackActiveOver;
-	inactiveFgOver: mediaviewPlaybackInactiveOver;
+	inactiveFgOver: mediaviewPlaybackInactive;
 	activeFgDisabled: mediaviewPlaybackActive;
 	inactiveFgDisabled: mediaviewPlaybackInactive;
+	receivedTillFg: mediaviewPlaybackInactiveOver;
 	seekSize: size(11px, 11px);
 	duration: mediaviewOverDuration;
 }
@@ -43,7 +44,7 @@ mediaviewPauseIcon: icon {{ "media_pause", mediaviewPlaybackIconFg, point(1px, 1
 mediaviewPauseIconOver: icon {{ "media_pause", mediaviewPlaybackIconFgOver, point(1px, 1px) }};
 mediaviewPlayPauseLeft: 17px;
 mediaviewFullScreenLeft: 17px;
-mediaviewVolumeLeft: 15px;
+mediaviewVolumeLeft: 7px;
 
 mediaviewFullScreenButton: IconButton(mediaviewPlayButton) {
 	icon: icon {{ "media_fullscreen_to", mediaviewPlaybackIconFg, point(0px, 0px) }};
@@ -55,11 +56,7 @@ mediaviewFullScreenOutIconOver: icon {{ "media_fullscreen_from", mediaviewPlayba
 
 mediaviewPlaybackTop: 28px;
 
-mediaviewVolumeSize: size(44px, 20px);
-mediaviewVolumeIcon: icon {{ "media_volume", mediaviewPlaybackInactiveOver, point(0px, 0px) }};
-mediaviewVolumeOnIcon: icon {{ "media_volume", mediaviewPlaybackActive, point(0px, 0px) }};
-mediaviewVolumeOnIconOver: icon {{ "media_volume", mediaviewPlaybackActiveOver, point(0px, 0px) }};
-mediaviewVolumeIconTop: 8px;
+mediaviewVolumeWidth: 60px;
 mediaviewControllerRadius: 25px;
 
 mediaviewLeft: icon {{ "mediaview_next-flip_horizontal", mediaviewControlFg }};
@@ -191,11 +188,16 @@ mediaviewGroupWidthMax: 160px;
 mediaviewGroupSkip: 3px;
 mediaviewGroupSkipCurrent: 12px;
 
+mediaviewStreamingRadial: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+	color: radialFg;
+	thickness: radialLine;
+}
+
 themePreviewSize: size(903px, 584px);
 themePreviewBg: windowBg;
 themePreviewOverlayOpacity: 0.8;
-themePreviewMargin: margins(36px, 52px, 36px, 88px);
-themePreviewTitleTop: 14px;
+themePreviewMargin: margins(36px, 72px, 36px, 88px);
+themePreviewTitleTop: 24px;
 themePreviewTitleFg: windowBoldFg;
 themePreviewTitleFont: font(17px semibold);
 themePreviewLoadingFont: font(16px);

@@ -10,12 +10,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/runtime_composer.h"
 #include "base/flags.h"
 #include "base/value_ordering.h"
+#include "data/data_media_types.h"
 
 enum class UnreadMentionType;
 struct HistoryMessageReplyMarkup;
 class ReplyKeyboard;
 class HistoryMessage;
-class HistoryMedia;
 
 namespace base {
 template <typename Enum>
@@ -42,7 +42,7 @@ class Media;
 } // namespace Data
 
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 namespace HistoryView {
@@ -54,15 +54,17 @@ enum class Context : char;
 class ElementDelegate;
 } // namespace HistoryView
 
+struct HiddenSenderInfo;
+
 class HistoryItem : public RuntimeComposer<HistoryItem> {
 public:
 	static not_null<HistoryItem*> Create(
 		not_null<History*> history,
-		const MTPMessage &message);
+		const MTPMessage &message,
+		MTPDmessage_ClientFlags clientFlags);
 
 	struct Destroyer {
 		void operator()(HistoryItem *value);
-
 	};
 
 	virtual void dependencyItemRemoved(HistoryItem *dependency) {
@@ -73,19 +75,21 @@ public:
 	virtual MsgId dependencyMsgId() const {
 		return 0;
 	}
-	virtual bool notificationReady() const {
+	[[nodiscard]] virtual bool notificationReady() const {
 		return true;
 	}
+	[[nodiscard]] PeerData *specialNotificationPeer() const;
 	virtual void applyGroupAdminChanges(
-		const base::flat_map<UserId, bool> &changes) {
+		const base::flat_set<UserId> &changes) {
 	}
 
-	UserData *viaBot() const;
-	UserData *getMessageBot() const;
+	[[nodiscard]] UserData *viaBot() const;
+	[[nodiscard]] UserData *getMessageBot() const;
+	[[nodiscard]] bool isHistoryEntry() const;
+	[[nodiscard]] bool isAdminLogEntry() const;
+	[[nodiscard]] bool isFromScheduled() const;
+	[[nodiscard]] bool isScheduled() const;
 
-	bool isLogEntry() const {
-		return (id > ServerMaxMsgId);
-	}
 	void addLogEntryOriginal(
 		WebPageId localId,
 		const QString &label,
@@ -108,71 +112,115 @@ public:
 	void removeMainView();
 
 	void destroy();
-	bool out() const {
+	[[nodiscard]] bool out() const {
 		return _flags & MTPDmessage::Flag::f_out;
 	}
-	bool unread() const;
-	bool mentionsMe() const {
-		return _flags & MTPDmessage::Flag::f_mentioned;
-	}
-	bool isMediaUnread() const;
+	[[nodiscard]] bool unread() const;
+	[[nodiscard]] bool showNotification() const;
+	void markClientSideAsRead();
+	[[nodiscard]] bool mentionsMe() const;
+	[[nodiscard]] bool isUnreadMention() const;
+	[[nodiscard]] bool isUnreadMedia() const;
+	[[nodiscard]] bool hasUnreadMediaFlag() const;
 	void markMediaRead();
 
+	// For edit media in history_message.
+	virtual void returnSavedMedia() {};
+	void savePreviousMedia() {
+		_savedMedia = _media->clone(this);
+	}
+	[[nodiscard]] bool isEditingMedia() const {
+		return _savedMedia != nullptr;
+	}
+	void clearSavedMedia() {
+		_savedMedia = nullptr;
+	}
+
 	// Zero result means this message is not self-destructing right now.
-	virtual TimeMs getSelfDestructIn(TimeMs now) {
+	virtual crl::time getSelfDestructIn(crl::time now) {
 		return 0;
 	}
 
-	bool definesReplyKeyboard() const;
-	MTPDreplyKeyboardMarkup::Flags replyKeyboardFlags() const;
+	[[nodiscard]] bool definesReplyKeyboard() const;
+	[[nodiscard]] MTPDreplyKeyboardMarkup::Flags replyKeyboardFlags() const;
 
-	bool hasSwitchInlineButton() const {
-		return _flags & MTPDmessage_ClientFlag::f_has_switch_inline_button;
+	[[nodiscard]] bool hasSwitchInlineButton() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_has_switch_inline_button;
 	}
-	bool hasTextLinks() const {
-		return _flags & MTPDmessage_ClientFlag::f_has_text_links;
+	[[nodiscard]] bool hasTextLinks() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_has_text_links;
 	}
-	bool isGroupMigrate() const {
-		return _flags & MTPDmessage_ClientFlag::f_is_group_migrate;
+	[[nodiscard]] bool isGroupEssential() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_is_group_essential;
 	}
-	bool hasViews() const {
+	[[nodiscard]] bool isLocalUpdateMedia() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_is_local_update_media;
+	}
+	void setIsLocalUpdateMedia(bool flag) {
+		if (flag) {
+			_clientFlags |= MTPDmessage_ClientFlag::f_is_local_update_media;
+		} else {
+			_clientFlags &= ~MTPDmessage_ClientFlag::f_is_local_update_media;
+		}
+	}
+	[[nodiscard]] bool isGroupMigrate() const {
+		return isGroupEssential() && isEmpty();
+	}
+	[[nodiscard]] bool isIsolatedEmoji() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_isolated_emoji;
+	}
+	[[nodiscard]] bool hasViews() const {
 		return _flags & MTPDmessage::Flag::f_views;
 	}
-	bool isPost() const {
+	[[nodiscard]] bool isPost() const {
 		return _flags & MTPDmessage::Flag::f_post;
 	}
-	bool isSilent() const {
+	[[nodiscard]] bool isSilent() const {
 		return _flags & MTPDmessage::Flag::f_silent;
 	}
-	virtual int viewsCount() const {
+	[[nodiscard]] bool isSending() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_sending;
+	}
+	[[nodiscard]] bool hasFailed() const {
+		return _clientFlags & MTPDmessage_ClientFlag::f_failed;
+	}
+	void sendFailed();
+	[[nodiscard]] virtual int viewsCount() const {
 		return hasViews() ? 1 : -1;
 	}
 
-	virtual bool needCheck() const;
+	[[nodiscard]] virtual bool needCheck() const;
 
-	virtual bool serviceMsg() const {
+	[[nodiscard]] virtual bool serviceMsg() const {
 		return false;
 	}
 	virtual void applyEdition(const MTPDmessage &message) {
 	}
 	virtual void applyEdition(const MTPDmessageService &message) {
 	}
-	virtual void updateSentMedia(const MTPMessageMedia *media) {
+	void applyEditionToHistoryCleared();
+	virtual void updateSentContent(
+		const TextWithEntities &textWithEntities,
+		const MTPMessageMedia *media) {
 	}
 	virtual void updateReplyMarkup(const MTPReplyMarkup *markup) {
+	}
+	virtual void updateForwardedInfo(const MTPMessageFwdHeader *fwd) {
+	}
+	virtual void contributeToSlowmode(TimeId realDate = 0) {
 	}
 
 	virtual void addToUnreadMentions(UnreadMentionType type);
 	virtual void eraseFromUnreadMentions() {
 	}
-	virtual Storage::SharedMediaTypesMask sharedMediaTypes() const = 0;
+	[[nodiscard]] virtual Storage::SharedMediaTypesMask sharedMediaTypes() const = 0;
 
 	void indexAsNewItem();
 
-	virtual QString notificationHeader() const {
+	[[nodiscard]] virtual QString notificationHeader() const {
 		return QString();
 	}
-	virtual QString notificationText() const;
+	[[nodiscard]] virtual QString notificationText() const;
 
 	enum class DrawInDialog {
 		Normal,
@@ -181,15 +229,16 @@ public:
 
 	// Returns text with link-start and link-end commands for service-color highlighting.
 	// Example: "[link1-start]You:[link1-end] [link1-start]Photo,[link1-end] caption text"
-	virtual QString inDialogsText(DrawInDialog way) const;
-	virtual QString inReplyText() const {
+	[[nodiscard]] virtual QString inDialogsText(DrawInDialog way) const;
+	[[nodiscard]] virtual QString inReplyText() const {
 		return inDialogsText(DrawInDialog::WithoutSender);
 	}
-	virtual TextWithEntities originalText() const {
-		return { QString(), EntitiesInText() };
+	[[nodiscard]] virtual Ui::Text::IsolatedEmoji isolatedEmoji() const;
+	[[nodiscard]] virtual TextWithEntities originalText() const {
+		return TextWithEntities();
 	}
-	virtual TextWithEntities clipboardText() const {
-		return { QString(), EntitiesInText() };
+	[[nodiscard]] virtual TextForMimeData clipboardText() const {
+		return TextForMimeData();
 	}
 
 	virtual void setViewsCount(int32 count) {
@@ -203,73 +252,91 @@ public:
 		bool selected,
 		DrawInDialog way,
 		const HistoryItem *&cacheFor,
-		Text &cache) const;
+		Ui::Text::String &cache) const;
 
-	bool emptyText() const {
+	[[nodiscard]] bool emptyText() const {
 		return _text.isEmpty();
 	}
 
-	bool isPinned() const;
-	bool canPin() const;
-	virtual bool allowsForward() const;
-	virtual bool allowsEdit(TimeId now) const;
-	bool canDelete() const;
-	bool canDeleteForEveryone(TimeId now) const;
-	bool suggestReport() const;
-	bool suggestBanReport() const;
-	bool suggestDeleteAllReport() const;
+	[[nodiscard]] bool isPinned() const;
+	[[nodiscard]] bool canPin() const;
+	[[nodiscard]] bool canStopPoll() const;
+	[[nodiscard]] virtual bool allowsSendNow() const;
+	[[nodiscard]] virtual bool allowsForward() const;
+	[[nodiscard]] virtual bool allowsEdit(TimeId now) const;
+	[[nodiscard]] bool canDelete() const;
+	[[nodiscard]] bool canDeleteForEveryone(TimeId now) const;
+	[[nodiscard]] bool suggestReport() const;
+	[[nodiscard]] bool suggestBanReport() const;
+	[[nodiscard]] bool suggestDeleteAllReport() const;
 
-	bool hasDirectLink() const;
-	QString directLink() const;
+	[[nodiscard]] bool hasDirectLink() const;
 
-	MsgId id;
-
-	ChannelId channelId() const;
-	FullMsgId fullId() const {
+	[[nodiscard]] ChannelId channelId() const;
+	[[nodiscard]] FullMsgId fullId() const {
 		return FullMsgId(channelId(), id);
 	}
-	Data::MessagePosition position() const;
-	TimeId date() const;
+	[[nodiscard]] Data::MessagePosition position() const;
+	[[nodiscard]] TimeId date() const;
 
-	Data::Media *media() const {
+	[[nodiscard]] static TimeId NewMessageDate(TimeId scheduled);
+
+	[[nodiscard]] Data::Media *media() const {
 		return _media.get();
 	}
 	virtual void setText(const TextWithEntities &textWithEntities) {
 	}
-	virtual bool textHasLinks() const {
+	[[nodiscard]] virtual bool textHasLinks() const {
 		return false;
 	}
 
-	virtual HistoryMessage *toHistoryMessage() { // dynamic_cast optimize
+	[[nodiscard]] virtual HistoryMessage *toHistoryMessage() { // dynamic_cast optimize
 		return nullptr;
 	}
-	virtual const HistoryMessage *toHistoryMessage() const { // dynamic_cast optimize
+	[[nodiscard]] virtual const HistoryMessage *toHistoryMessage() const { // dynamic_cast optimize
 		return nullptr;
 	}
-	MsgId replyToId() const;
+	[[nodiscard]] MsgId replyToId() const;
 
-	not_null<PeerData*> author() const;
+	[[nodiscard]] not_null<PeerData*> author() const;
 
-	TimeId dateOriginal() const;
-	not_null<PeerData*> senderOriginal() const;
-	not_null<PeerData*> fromOriginal() const;
-	QString authorOriginal() const;
-	MsgId idOriginal() const;
+	[[nodiscard]] TimeId dateOriginal() const;
+	[[nodiscard]] PeerData *senderOriginal() const;
+	[[nodiscard]] const HiddenSenderInfo *hiddenForwardedInfo() const;
+	[[nodiscard]] not_null<PeerData*> fromOriginal() const;
+	[[nodiscard]] QString authorOriginal() const;
+	[[nodiscard]] MsgId idOriginal() const;
 
-	bool isEmpty() const;
+	[[nodiscard]] bool isEmpty() const;
 
-	MessageGroupId groupId() const;
+	[[nodiscard]] MessageGroupId groupId() const;
 
-	virtual std::unique_ptr<HistoryView::Element> createView(
+	[[nodiscard]] const HistoryMessageReplyMarkup *inlineReplyMarkup() const {
+		return const_cast<HistoryItem*>(this)->inlineReplyMarkup();
+	}
+	[[nodiscard]] const ReplyKeyboard *inlineReplyKeyboard() const {
+		return const_cast<HistoryItem*>(this)->inlineReplyKeyboard();
+	}
+	[[nodiscard]] HistoryMessageReplyMarkup *inlineReplyMarkup();
+	[[nodiscard]] ReplyKeyboard *inlineReplyKeyboard();
+
+	[[nodiscard]] ChannelData *discussionPostOriginalSender() const;
+	[[nodiscard]] bool isDiscussionPost() const;
+	[[nodiscard]] PeerData *displayFrom() const;
+
+	[[nodiscard]] virtual std::unique_ptr<HistoryView::Element> createView(
 		not_null<HistoryView::ElementDelegate*> delegate) = 0;
 
 	virtual ~HistoryItem();
+
+	MsgId id;
 
 protected:
 	HistoryItem(
 		not_null<History*> history,
 		MsgId id,
 		MTPDmessage::Flags flags,
+		MTPDmessage_ClientFlags clientFlags,
 		TimeId date,
 		UserId from);
 
@@ -282,23 +349,17 @@ protected:
 	const not_null<History*> _history;
 	not_null<PeerData*> _from;
 	MTPDmessage::Flags _flags = 0;
+	MTPDmessage_ClientFlags _clientFlags = 0;
 
-	const HistoryMessageReplyMarkup *inlineReplyMarkup() const {
-		return const_cast<HistoryItem*>(this)->inlineReplyMarkup();
-	}
-	const ReplyKeyboard *inlineReplyKeyboard() const {
-		return const_cast<HistoryItem*>(this)->inlineReplyKeyboard();
-	}
-	HistoryMessageReplyMarkup *inlineReplyMarkup();
-	ReplyKeyboard *inlineReplyKeyboard();
-	void invalidateChatsListEntry();
+	void invalidateChatListEntry();
 
 	void setGroupId(MessageGroupId groupId);
 
-	Text _text = { int(st::msgMinWidth) };
+	Ui::Text::String _text = { st::msgMinWidth };
 	int _textWidth = -1;
 	int _textHeight = 0;
 
+	std::unique_ptr<Data::Media> _savedMedia;
 	std::unique_ptr<Data::Media> _media;
 
 private:
@@ -307,7 +368,7 @@ private:
 	HistoryView::Element *_mainView = nullptr;
 	friend class HistoryView::Element;
 
-	MessageGroupId _groupId = MessageGroupId::None;
+	MessageGroupId _groupId = MessageGroupId();
 
 };
 

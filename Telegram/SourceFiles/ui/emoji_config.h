@@ -7,16 +7,49 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/text/text.h"
+#include "base/binary_guard.h"
 #include "emoji.h"
+#include "lang/lang_keys.h"
 
 namespace Ui {
 namespace Emoji {
+namespace internal {
 
-constexpr auto kPostfix = static_cast<ushort>(0xFE0F);
+[[nodiscard]] QString CacheFileFolder();
+[[nodiscard]] QString SetDataPath(int id);
+
+} // namespace internal
+
 constexpr auto kRecentLimit = 42;
 
 void Init();
+void Clear();
+
+void ClearIrrelevantCache();
+
+struct Set {
+	int id = 0;
+	int postId = 0;
+	int size = 0;
+	QString name;
+	QString previewPath;
+};
+
+// Thread safe, callback is called on main thread.
+void SwitchToSet(int id, Fn<void(bool)> callback);
+
+tr::phrase<> CategoryTitle(int index);
+
+std::vector<Set> Sets();
+int CurrentSetId();
+bool SetIsReady(int id);
+rpl::producer<> Updated();
+
+int GetSizeNormal();
+int GetSizeLarge();
+#if defined Q_OS_MAC && !defined OS_MAC_OLD
+int GetSizeTouchbar();
+#endif
 
 class One {
 	struct CreationTag {
@@ -24,13 +57,12 @@ class One {
 
 public:
 	One(One &&other) = default;
-	One(const QString &id, uint16 x, uint16 y, bool hasPostfix, bool colorizable, EmojiPtr original, const CreationTag &)
+	One(const QString &id, EmojiPtr original, uint32 index, bool hasPostfix, bool colorizable, const CreationTag &)
 	: _id(id)
-	, _x(x)
-	, _y(y)
+	, _original(original)
+	, _index(index)
 	, _hasPostfix(hasPostfix)
-	, _colorizable(colorizable)
-	, _original(original) {
+	, _colorizable(colorizable) {
 		Expects(!_colorizable || !colored());
 	}
 
@@ -62,25 +94,29 @@ public:
 	int variantIndex(EmojiPtr variant) const;
 	EmojiPtr variant(int index) const;
 
-	int index() const;
+	int index() const {
+		return _index;
+	}
+	int sprite() const {
+		return int(_index >> 9);
+	}
+	int row() const {
+		return int((_index >> 5) & 0x0FU);
+	}
+	int column() const {
+		return int(_index & 0x1FU);
+	}
+
 	QString toUrl() const {
 		return qsl("emoji://e.") + QString::number(index());
 	}
 
-	int x() const {
-		return _x;
-	}
-	int y() const {
-		return _y;
-	}
-
 private:
 	const QString _id;
-	const uint16 _x = 0;
-	const uint16 _y = 0;
+	const EmojiPtr _original = nullptr;
+	const uint32 _index = 0;
 	const bool _hasPostfix = false;
 	const bool _colorizable = false;
-	const EmojiPtr _original = nullptr;
 
 	friend void internal::Init();
 
@@ -123,25 +159,36 @@ inline int ColorIndexFromOldKey(uint64 oldKey) {
 	return ColorIndexFromCode(uint32(oldKey & 0xFFFFFFFFLLU));
 }
 
-inline int Size(int index = Index()) {
-	int sizes[] = { 18, 22, 27, 36, 45 };
-	return sizes[index];
-}
-
-inline QString Filename(int index = Index()) {
-	const char *EmojiNames[] = {
-		":/gui/art/emoji.webp",
-		":/gui/art/emoji_125x.webp",
-		":/gui/art/emoji_150x.webp",
-		":/gui/art/emoji_200x.webp",
-		":/gui/art/emoji_250x.webp",
-	};
-	return QString::fromLatin1(EmojiNames[index]);
-}
-
 void ReplaceInText(TextWithEntities &result);
 RecentEmojiPack &GetRecent();
 void AddRecent(EmojiPtr emoji);
+rpl::producer<> UpdatedRecent();
+
+const QPixmap &SinglePixmap(EmojiPtr emoji, int fontHeight);
+void Draw(QPainter &p, EmojiPtr emoji, int size, int x, int y);
+
+class UniversalImages {
+public:
+	explicit UniversalImages(int id);
+
+	int id() const;
+	bool ensureLoaded();
+	void clear();
+
+	void draw(QPainter &p, EmojiPtr emoji, int size, int x, int y) const;
+
+	// This method must be thread safe and so it is called after
+	// the _id value is fixed and all _sprites are loaded.
+	QImage generate(int size, int index) const;
+
+private:
+	const int _id = 0;
+	std::vector<QImage> _sprites;
+
+};
+
+const std::shared_ptr<UniversalImages> &SourceImages();
+void ClearSourceImages(const std::shared_ptr<UniversalImages> &images);
 
 } // namespace Emoji
 } // namespace Ui

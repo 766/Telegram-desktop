@@ -9,6 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/connection_abstract.h"
 
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkReply>
+
 namespace MTP {
 namespace internal {
 
@@ -18,8 +21,8 @@ public:
 
 	ConnectionPointer clone(const ProxyData &proxy) override;
 
-	TimeMs pingTime() const override;
-	TimeMs fullConnectTimeout() const override;
+	crl::time pingTime() const override;
+	crl::time fullConnectTimeout() const override;
 	void sendData(mtpBuffer &&buffer) override;
 	void disconnectFromServer() override;
 	void connectToServer(
@@ -57,7 +60,7 @@ private:
 
 	QSet<QNetworkReply*> _requests;
 
-	TimeMs _pingTime = 0;
+	crl::time _pingTime = 0;
 
 };
 

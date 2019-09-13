@@ -34,7 +34,8 @@ class Panel;
 
 class PanelController {
 public:
-	PanelController(not_null<ControllerWrap*> process);
+	PanelController(not_null<Controller*> process);
+	~PanelController();
 
 	void activatePanel();
 	void stopWithConfirmation(FnMut<void()> callback = nullptr);
@@ -48,8 +49,6 @@ public:
 	auto progressState() const {
 		return ContentFromState(_process->state());
 	}
-
-	~PanelController();
 
 private:
 	void fillParams(const PasswordCheckState &state);
@@ -65,7 +64,7 @@ private:
 
 	void saveSettings() const;
 
-	not_null<ControllerWrap*> _process;
+	not_null<Controller*> _process;
 	std::unique_ptr<Settings> _settings;
 	base::Timer _saveSettingsTimer;
 

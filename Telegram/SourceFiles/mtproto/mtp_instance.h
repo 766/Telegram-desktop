@@ -35,10 +35,11 @@ public:
 
 		DcId mainDcId = kNotSetMainDc;
 		AuthKeysList keys;
+		QString deviceModel;
+		QString systemVersion;
 	};
 	enum class Mode {
 		Normal,
-		SpecialConfigRequester,
 		KeysDestroyer,
 	};
 	Instance(not_null<DcOptions*> options, Mode mode, Config &&config);
@@ -50,23 +51,27 @@ public:
 	void setGoodProxyDomain(const QString &host, const QString &ip);
 	void suggestMainDcId(DcId mainDcId);
 	void setMainDcId(DcId mainDcId);
-	DcId mainDcId() const;
-	QString systemLangCode() const;
-	QString cloudLangCode() const;
-	QString langPackName() const;
+	[[nodiscard]] DcId mainDcId() const;
+	[[nodiscard]] QString systemLangCode() const;
+	[[nodiscard]] QString cloudLangCode() const;
+	[[nodiscard]] QString langPackName() const;
+
+	// Thread safe.
+	[[nodiscard]] QString deviceModel() const;
+	[[nodiscard]] QString systemVersion() const;
 
 	void setKeyForWrite(DcId dcId, const AuthKeyPtr &key);
-	AuthKeysList getKeysForWrite() const;
+	[[nodiscard]] AuthKeysList getKeysForWrite() const;
 	void addKeysForDestroy(AuthKeysList &&keys);
 
-	not_null<DcOptions*> dcOptions();
+	[[nodiscard]] not_null<DcOptions*> dcOptions();
 
 	template <typename Request>
 	mtpRequestId send(
 			const Request &request,
 			RPCResponseHandler &&callbacks = {},
 			ShiftedDcId shiftedDcId = 0,
-			TimeMs msCanWait = 0,
+			crl::time msCanWait = 0,
 			mtpRequestId afterRequestId = 0) {
 		const auto requestId = GetNextRequestId();
 		sendSerialized(
@@ -85,7 +90,7 @@ public:
 			RPCDoneHandlerPtr &&onDone,
 			RPCFailHandlerPtr &&onFail = nullptr,
 			ShiftedDcId shiftedDcId = 0,
-			TimeMs msCanWait = 0,
+			crl::time msCanWait = 0,
 			mtpRequestId afterRequestId = 0) {
 		return send(
 			request,
@@ -116,7 +121,7 @@ public:
 			SecureRequest &&request,
 			RPCResponseHandler &&callbacks,
 			ShiftedDcId shiftedDcId,
-			TimeMs msCanWait,
+			crl::time msCanWait,
 			mtpRequestId afterRequestId) {
 		const auto needsLayer = true;
 		sendRequest(
@@ -129,7 +134,7 @@ public:
 			afterRequestId);
 	}
 
-	void sendAnything(ShiftedDcId shiftedDcId = 0, TimeMs msCanWait = 0);
+	void sendAnything(ShiftedDcId shiftedDcId = 0, crl::time msCanWait = 0);
 
 	void restart();
 	void restart(ShiftedDcId shiftedDcId);
@@ -175,6 +180,8 @@ public:
 	void setUserPhone(const QString &phone);
 	void badConfigurationError();
 
+	void syncHttpUnixtime();
+
 	~Instance();
 
 public slots:
@@ -199,7 +206,7 @@ private:
 		SecureRequest &&request,
 		RPCResponseHandler &&callbacks,
 		ShiftedDcId shiftedDcId,
-		TimeMs msCanWait,
+		crl::time msCanWait,
 		bool needsLayer,
 		mtpRequestId afterRequestId);
 

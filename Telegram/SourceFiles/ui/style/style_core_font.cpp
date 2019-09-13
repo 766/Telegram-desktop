@@ -21,7 +21,7 @@ typedef QMap<uint32, FontData*> FontDatas;
 FontDatas fontsMap;
 
 uint32 fontKey(int size, uint32 flags, int family) {
-	return (((uint32(family) << 10) | uint32(size)) << 3) | flags;
+	return (((uint32(family) << 10) | uint32(size)) << 4) | flags;
 }
 
 } // namespace
@@ -57,9 +57,14 @@ FontData::FontData(int size, uint32 flags, int family, Font *other)
 	modified[_flags] = Font(this);
 
 	f.setPixelSize(size);
-	f.setBold(_flags & FontBold);
+	if (_flags & FontBold) {
+		f.setBold(true);
+	//} else if (fontFamilies[family] == "Open Sans Semibold") {
+	//	f.setWeight(QFont::DemiBold);
+	}
 	f.setItalic(_flags & FontItalic);
 	f.setUnderline(_flags & FontUnderline);
+	f.setStrikeOut(_flags & FontStrikeOut);
 	f.setStyleStrategy(QFont::PreferQuality);
 
 	m = QFontMetrics(f);
@@ -80,6 +85,10 @@ Font FontData::italic(bool set) const {
 
 Font FontData::underline(bool set) const {
 	return otherFlagsFont(FontUnderline, set);
+}
+
+Font FontData::strikeout(bool set) const {
+	return otherFlagsFont(FontStrikeOut, set);
 }
 
 int FontData::size() const {

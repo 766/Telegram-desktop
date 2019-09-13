@@ -7,7 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-class AuthSession;
+#include "base/timer.h"
+
+namespace Main {
+class Session;
+} // namespace Main
 
 namespace Platform {
 namespace Notifications {
@@ -27,6 +31,7 @@ namespace Notifications {
 enum class ChangeType {
 	SoundEnabled,
 	IncludeMuted,
+	CountMessages,
 	DesktopEnabled,
 	ViewParams,
 	MaxCount,
@@ -52,14 +57,15 @@ class Manager;
 
 class System final : private base::Subscriber {
 public:
-	System(AuthSession *session);
+	explicit System(not_null<Main::Session*> session);
 
 	void createManager();
 
 	void checkDelayed();
-	void schedule(History *history, HistoryItem *item);
-	void clearFromHistory(History *history);
-	void clearFromItem(HistoryItem *item);
+	void schedule(not_null<HistoryItem*> item);
+	void clearFromHistory(not_null<History*> history);
+	void clearIncomingFromHistory(not_null<History*> history);
+	void clearFromItem(not_null<HistoryItem*> item);
 	void clearAll();
 	void clearAllFast();
 	void updateAll();
@@ -68,36 +74,50 @@ public:
 		return _settingsChanged;
 	}
 
-	AuthSession *authSession() {
-		return _authSession;
+	Main::Session &session() const {
+		return *_session;
 	}
 
 	~System();
 
 private:
+	struct SkipState {
+		enum Value {
+			Unknown,
+			Skip,
+			DontSkip
+		};
+		Value value = Value::Unknown;
+		bool silent = false;
+	};
+
+	SkipState skipNotification(not_null<HistoryItem*> item) const;
+
 	void showNext();
+	void showGrouped();
 	void ensureSoundCreated();
 
-	AuthSession *_authSession = nullptr;
+	not_null<Main::Session*> _session;
 
-	QMap<History*, QMap<MsgId, TimeMs>> _whenMaps;
+	QMap<History*, QMap<MsgId, crl::time>> _whenMaps;
 
 	struct Waiter {
-		Waiter(MsgId msg, TimeMs when, PeerData *notifyBy)
+		Waiter(MsgId msg, crl::time when, PeerData *notifyBy)
 		: msg(msg)
 		, when(when)
 		, notifyBy(notifyBy) {
 		}
 		MsgId msg;
-		TimeMs when;
+		crl::time when;
 		PeerData *notifyBy;
 	};
 	using Waiters = QMap<History*, Waiter>;
 	Waiters _waiters;
 	Waiters _settingWaiters;
-	SingleTimer _waitTimer;
+	base::Timer _waitTimer;
+	base::Timer _waitForAllGroupedTimer;
 
-	QMap<History*, QMap<TimeMs, PeerData*>> _whenAlerts;
+	QMap<History*, QMap<crl::time, PeerData*>> _whenAlerts;
 
 	std::unique_ptr<Manager> _manager;
 
@@ -105,14 +125,19 @@ private:
 
 	std::unique_ptr<Media::Audio::Track> _soundTrack;
 
+	int _lastForwardedCount = 0;
+	FullMsgId _lastHistoryItemId;
+
 };
 
 class Manager {
 public:
-	Manager(System *system) : _system(system) {
+	explicit Manager(not_null<System*> system) : _system(system) {
 	}
 
-	void showNotification(HistoryItem *item, int forwardedCount) {
+	void showNotification(
+			not_null<HistoryItem*> item,
+			int forwardedCount) {
 		doShowNotification(item, forwardedCount);
 	}
 	void updateAll() {
@@ -124,10 +149,10 @@ public:
 	void clearAllFast() {
 		doClearAllFast();
 	}
-	void clearFromItem(HistoryItem *item) {
+	void clearFromItem(not_null<HistoryItem*> item) {
 		doClearFromItem(item);
 	}
-	void clearFromHistory(History *history) {
+	void clearFromHistory(not_null<History*> history) {
 		doClearFromHistory(history);
 	}
 
@@ -147,16 +172,18 @@ public:
 	virtual ~Manager() = default;
 
 protected:
-	System *system() const {
+	not_null<System*> system() const {
 		return _system;
 	}
 
 	virtual void doUpdateAll() = 0;
-	virtual void doShowNotification(HistoryItem *item, int forwardedCount) = 0;
+	virtual void doShowNotification(
+		not_null<HistoryItem*> item,
+		int forwardedCount) = 0;
 	virtual void doClearAll() = 0;
 	virtual void doClearAllFast() = 0;
-	virtual void doClearFromItem(HistoryItem *item) = 0;
-	virtual void doClearFromHistory(History *history) = 0;
+	virtual void doClearFromItem(not_null<HistoryItem*> item) = 0;
+	virtual void doClearFromHistory(not_null<History*> history) = 0;
 	virtual void onBeforeNotificationActivated(PeerId peerId, MsgId msgId) {
 	}
 	virtual void onAfterNotificationActivated(PeerId peerId, MsgId msgId) {
@@ -167,7 +194,7 @@ private:
 		not_null<History*> history,
 		MsgId messageId);
 
-	System *_system = nullptr;
+	const not_null<System*> _system;
 
 };
 
@@ -181,13 +208,24 @@ protected:
 	void doClearAll() override {
 		doClearAllFast();
 	}
-	void doClearFromItem(HistoryItem *item) override {
+	void doClearFromItem(not_null<HistoryItem*> item) override {
 	}
-	void doShowNotification(HistoryItem *item, int forwardedCount) override;
+	void doShowNotification(
+		not_null<HistoryItem*> item,
+		int forwardedCount) override;
 
-	virtual void doShowNativeNotification(PeerData *peer, MsgId msgId, const QString &title, const QString &subtitle, const QString &msg, bool hideNameAndPhoto, bool hideReplyButton) = 0;
+	virtual void doShowNativeNotification(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		const QString &title,
+		const QString &subtitle,
+		const QString &msg,
+		bool hideNameAndPhoto,
+		bool hideReplyButton) = 0;
 
 };
+
+QString WrapFromScheduled(const QString &text);
 
 } // namespace Notifications
 } // namespace Window

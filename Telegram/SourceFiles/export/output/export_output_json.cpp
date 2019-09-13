@@ -172,6 +172,9 @@ QByteArray SerializeText(
 			case Type::MentionName: return "mention_name";
 			case Type::Phone: return "phone";
 			case Type::Cashtag: return "cashtag";
+			case Type::Underline: return "underline";
+			case Type::Strike: return "strikethrough";
+			case Type::Blockquote: return "blockquote";
 			}
 			Unexpected("Type in SerializeText.");
 		}();
@@ -219,7 +222,7 @@ QByteArray SerializeMessage(
 
 	if (message.media.content.is<UnsupportedMedia>()) {
 		return SerializeObject(context, {
-			{ "id", NumberToString(message.id) },
+			{ "id", Data::NumberToString(message.id) },
 			{ "type", SerializeString("unsupported") }
 		});
 	}
@@ -271,7 +274,7 @@ QByteArray SerializeMessage(
 	};
 	const auto push = [&](const QByteArray &key, const auto &value) {
 		if constexpr (std::is_arithmetic_v<std::decay_t<decltype(value)>>) {
-			pushBare(key, NumberToString(value));
+			pushBare(key, Data::NumberToString(value));
 		} else {
 			const auto wrapped = QByteArray(value);
 			if (!wrapped.isEmpty()) {
@@ -288,6 +291,7 @@ QByteArray SerializeMessage(
 	const auto pushFrom = [&](const QByteArray &label = "from") {
 		if (message.fromId) {
 			pushBare(label, wrapUserName(message.fromId));
+			pushBare(label+"_id", Data::NumberToString(message.fromId));
 		}
 	};
 	const auto pushReplyToMsgId = [&](
@@ -458,6 +462,12 @@ QByteArray SerializeMessage(
 			}()));
 		}
 		pushBare("values", SerializeArray(context, list));
+	}, [&](const ActionContactSignUp &data) {
+		pushActor();
+		pushAction("joined_telegram");
+	}, [&](const ActionPhoneNumberRequest &data) {
+		pushActor();
+		pushAction("requested_phone_number");
 	}, [](std::nullopt_t) {});
 
 	if (!message.action.content) {
@@ -467,6 +477,10 @@ QByteArray SerializeMessage(
 			pushBare(
 				"forwarded_from",
 				wrapPeerName(message.forwardedFromId));
+		} else if (!message.forwardedFromName.isEmpty()) {
+			pushBare(
+				"forwarded_from",
+				StringAllowNull(message.forwardedFromName));
 		}
 		if (message.savedFromChatId) {
 			pushBare("saved_from", wrapPeerName(message.savedFromChatId));
@@ -570,6 +584,29 @@ QByteArray SerializeMessage(
 				? NumberToString(data.receiptMsgId)
 				: QByteArray()) }
 		}));
+	}, [&](const Poll &data) {
+		context.nesting.push_back(Context::kObject);
+		const auto answers = ranges::view::all(
+			data.answers
+		) | ranges::view::transform([&](const Poll::Answer &answer) {
+			context.nesting.push_back(Context::kArray);
+			auto result = SerializeObject(context, {
+				{ "text", SerializeString(answer.text) },
+				{ "voters", NumberToString(answer.votes) },
+				{ "chosen", answer.my ? "true" : "false" },
+			});
+			context.nesting.pop_back();
+			return result;
+		}) | ranges::to_vector;
+		const auto serialized = SerializeArray(context, answers);
+		context.nesting.pop_back();
+
+		pushBare("poll", SerializeObject(context, {
+			{ "question", SerializeString(data.question) },
+			{ "closed", data.closed ? "true" : "false" },
+			{ "total_voters", NumberToString(data.totalVotes) },
+			{ "answers", serialized }
+		}));
 	}, [](const UnsupportedMedia &data) {
 		Unexpected("Unsupported message.");
 	}, [](std::nullopt_t) {});
@@ -640,6 +677,7 @@ Result JsonWriter::writePersonal(const Data::PersonalInfo &data) {
 	return _output->writeBlock(
 		prepareObjectItemStart("personal_information")
 		+ SerializeObject(_context, {
+		{ "user_id", Data::NumberToString(data.user.id) },
 		{ "first_name", SerializeString(info.firstName) },
 		{ "last_name", SerializeString(info.lastName) },
 		{
@@ -745,6 +783,7 @@ Result JsonWriter::writeSavedContacts(const Data::ContactsList &data) {
 			}));
 		} else {
 			block.append(SerializeObject(_context, {
+				{ "user_id", Data::NumberToString(contact.userId) },
 				{ "first_name", SerializeString(contact.firstName) },
 				{ "last_name", SerializeString(contact.lastName) },
 				{
@@ -789,6 +828,7 @@ Result JsonWriter::writeFrequentContacts(const Data::ContactsList &data) {
 			}();
 			block.append(prepareArrayItemStart());
 			block.append(SerializeObject(_context, {
+				{ "id", Data::NumberToString(top.peer.id()) },
 				{ "category", SerializeString(category) },
 				{ "type", SerializeString(type) },
 				{ "name",  StringAllowNull(top.peer.name()) },
@@ -981,6 +1021,8 @@ Result JsonWriter::writeDialogStart(const Data::DialogInfo &data) {
 	}
 	block.append(prepareObjectItemStart("type")
 		+ StringAllowNull(TypeString(data.type)));
+	block.append(prepareObjectItemStart("id")
+		+ Data::NumberToString(data.peerId));
 	block.append(prepareObjectItemStart("messages"));
 	block.append(pushNesting(Context::kArray));
 	return _output->writeBlock(block);

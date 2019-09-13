@@ -16,11 +16,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peer_list_controllers.h"
 #include "info/profile/info_profile_button.h"
 #include "settings/settings_common.h"
+#include "settings/settings_privacy_security.h"
 #include "calls/calls_instance.h"
 #include "base/binary_guard.h"
 #include "lang/lang_keys.h"
 #include "apiwrap.h"
-#include "auth_session.h"
+#include "main/main_session.h"
+#include "data/data_user.h"
+#include "data/data_chat.h"
+#include "data/data_channel.h"
+#include "window/window_session_controller.h"
 #include "styles/style_settings.h"
 #include "styles/style_boxes.h"
 
@@ -28,66 +33,103 @@ namespace {
 
 class PrivacyExceptionsBoxController : public ChatsListBoxController {
 public:
-	PrivacyExceptionsBoxController(Fn<QString()> titleFactory, const std::vector<not_null<UserData*>> &selected);
+	PrivacyExceptionsBoxController(
+		not_null<Window::SessionNavigation*> navigation,
+		rpl::producer<QString> title,
+		const std::vector<not_null<PeerData*>> &selected);
+
+	Main::Session &session() const override;
 	void rowClicked(not_null<PeerListRow*> row) override;
 
-	std::vector<not_null<UserData*>> getResult() const;
+	std::vector<not_null<PeerData*>> getResult() const;
 
 protected:
 	void prepareViewHook() override;
 	std::unique_ptr<Row> createRow(not_null<History*> history) override;
 
 private:
-	Fn<QString()> _titleFactory;
-	std::vector<not_null<UserData*>> _selected;
+	not_null<Window::SessionNavigation*> _navigation;
+	rpl::producer<QString> _title;
+	std::vector<not_null<PeerData*>> _selected;
 
 };
 
-PrivacyExceptionsBoxController::PrivacyExceptionsBoxController(Fn<QString()> titleFactory, const std::vector<not_null<UserData*>> &selected)
-: _titleFactory(std::move(titleFactory))
+PrivacyExceptionsBoxController::PrivacyExceptionsBoxController(
+	not_null<Window::SessionNavigation*> navigation,
+	rpl::producer<QString> title,
+	const std::vector<not_null<PeerData*>> &selected)
+: ChatsListBoxController(navigation)
+, _navigation(navigation)
+, _title(std::move(title))
 , _selected(selected) {
 }
 
+Main::Session &PrivacyExceptionsBoxController::session() const {
+	return _navigation->session();
+}
+
 void PrivacyExceptionsBoxController::prepareViewHook() {
-	delegate()->peerListSetTitle(_titleFactory);
+	delegate()->peerListSetTitle(std::move(_title));
 	delegate()->peerListAddSelectedRows(_selected);
 }
 
-std::vector<not_null<UserData*>> PrivacyExceptionsBoxController::getResult() const {
-	auto peers = delegate()->peerListCollectSelectedRows();
-	auto users = std::vector<not_null<UserData*>>();
-	if (!peers.empty()) {
-		users.reserve(peers.size());
-		for_const (auto peer, peers) {
-			auto user = peer->asUser();
-			Assert(user != nullptr);
-			users.push_back(user);
-		}
-	}
-	return users;
+std::vector<not_null<PeerData*>> PrivacyExceptionsBoxController::getResult() const {
+	return delegate()->peerListCollectSelectedRows();
 }
 
 void PrivacyExceptionsBoxController::rowClicked(not_null<PeerListRow*> row) {
 	delegate()->peerListSetRowChecked(row, !row->checked());
+	if (const auto channel = row->peer()->asChannel()) {
+		if (!channel->membersCountKnown()) {
+			channel->updateFull();
+		}
+	}
 }
 
 std::unique_ptr<PrivacyExceptionsBoxController::Row> PrivacyExceptionsBoxController::createRow(not_null<History*> history) {
 	if (history->peer->isSelf()) {
 		return nullptr;
+	} else if (!history->peer->isUser()
+		&& !history->peer->isChat()
+		&& !history->peer->isMegagroup()) {
+		return nullptr;
 	}
-	if (auto user = history->peer->asUser()) {
-		return std::make_unique<Row>(history);
+	auto result = std::make_unique<Row>(history);
+	const auto count = [&] {
+		if (const auto chat = history->peer->asChat()) {
+			return chat->count;
+		} else if (const auto channel = history->peer->asChannel()) {
+			return channel->membersCountKnown()
+				? channel->membersCount()
+				: 0;
+		}
+		return 0;
+	}();
+	if (count > 0) {
+		result->setCustomStatus(
+			tr::lng_chat_status_members(tr::now, lt_count_decimal, count));
 	}
-	return nullptr;
+	return result;
 }
 
 } // namespace
 
+QString EditPrivacyController::optionLabel(Option option) {
+	switch (option) {
+	case Option::Everyone: return tr::lng_edit_privacy_everyone(tr::now);
+	case Option::Contacts: return tr::lng_edit_privacy_contacts(tr::now);
+	case Option::Nobody: return tr::lng_edit_privacy_nobody(tr::now);
+	}
+	Unexpected("Option value in optionsLabelKey.");
+}
+
 EditPrivacyBox::EditPrivacyBox(
 	QWidget*,
-	std::unique_ptr<Controller> controller,
+	not_null<Window::SessionController*> window,
+	std::unique_ptr<EditPrivacyController> controller,
 	const Value &value)
-: _controller(std::move(controller))
+: _window(window)
+, _controller(std::move(controller))
 , _value(value) {
 }
 
@@ -97,34 +139,34 @@ void EditPrivacyBox::prepare() {
 	setupContent();
 }
 
-void EditPrivacyBox::editExceptionUsers(
+void EditPrivacyBox::editExceptions(
 		Exception exception,
 		Fn<void()> done) {
 	auto controller = std::make_unique<PrivacyExceptionsBoxController>(
-		crl::guard(this, [=] {
-			return _controller->exceptionBoxTitle(exception);
-		}),
-		exceptionUsers(exception));
+		_window,
+		_controller->exceptionBoxTitle(exception),
+		exceptions(exception));
 	auto initBox = [=, controller = controller.get()](
 			not_null<PeerListBox*> box) {
-		box->addButton(langFactory(lng_settings_save), crl::guard(this, [=] {
-			exceptionUsers(exception) = controller->getResult();
-			const auto removeFrom = ([=] {
+		box->addButton(tr::lng_settings_save(), crl::guard(this, [=] {
+			exceptions(exception) = controller->getResult();
+			const auto type = [&] {
 				switch (exception) {
 				case Exception::Always: return Exception::Never;
 				case Exception::Never: return Exception::Always;
 				}
 				Unexpected("Invalid exception value.");
-			})();
-			auto &removeFromUsers = exceptionUsers(removeFrom);
-			for (const auto user : exceptionUsers(exception)) {
-				const auto from = ranges::remove(removeFromUsers, user);
-				removeFromUsers.erase(from, end(removeFromUsers));
+			}();
+			auto &removeFrom = exceptions(type);
+			for (const auto peer : exceptions(exception)) {
+				removeFrom.erase(
+					ranges::remove(removeFrom, peer),
+					end(removeFrom));
 			}
 			done();
 			box->closeBox();
 		}));
-		box->addButton(langFactory(lng_cancel), [=] { box->closeBox(); });
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 	};
 	Ui::show(
 		Box<PeerListBox>(std::move(controller), std::move(initBox)),
@@ -132,11 +174,23 @@ void EditPrivacyBox::editExceptionUsers(
 }
 
 QVector<MTPInputPrivacyRule> EditPrivacyBox::collectResult() {
-	auto collectInputUsers = [](auto &users) {
+	const auto collectInputUsers = [](const auto &peers) {
 		auto result = QVector<MTPInputUser>();
-		result.reserve(users.size());
-		for (auto user : users) {
-			result.push_back(user->inputUser);
+		result.reserve(peers.size());
+		for (const auto peer : peers) {
+			if (const auto user = peer->asUser()) {
+				result.push_back(user->inputUser);
+			}
+		}
+		return result;
+	};
+	const auto collectInputChats = [](const auto &peers) {
+		auto result = QVector<MTPint>();
+		result.reserve(peers.size());
+		for (const auto peer : peers) {
+			if (!peer->isUser()) {
+				result.push_back(MTP_int(peer->bareId()));
+			}
 		}
 		return result;
 	};
@@ -144,11 +198,25 @@ QVector<MTPInputPrivacyRule> EditPrivacyBox::collectResult() {
 	constexpr auto kMaxRules = 3; // allow users, disallow users, option
 	auto result = QVector<MTPInputPrivacyRule>();
 	result.reserve(kMaxRules);
-	if (showExceptionLink(Exception::Always) && !_value.always.empty()) {
-		result.push_back(MTP_inputPrivacyValueAllowUsers(MTP_vector<MTPInputUser>(collectInputUsers(_value.always))));
+	if (showExceptionLink(Exception::Always)) {
+		const auto users = collectInputUsers(_value.always);
+		const auto chats = collectInputChats(_value.always);
+		if (!users.empty()) {
+			result.push_back(MTP_inputPrivacyValueAllowUsers(MTP_vector<MTPInputUser>(users)));
+		}
+		if (!chats.empty()) {
+			result.push_back(MTP_inputPrivacyValueAllowChatParticipants(MTP_vector<MTPint>(chats)));
+		}
 	}
-	if (showExceptionLink(Exception::Never) && !_value.never.empty()) {
-		result.push_back(MTP_inputPrivacyValueDisallowUsers(MTP_vector<MTPInputUser>(collectInputUsers(_value.never))));
+	if (showExceptionLink(Exception::Never)) {
+		const auto users = collectInputUsers(_value.never);
+		const auto chats = collectInputChats(_value.never);
+		if (!users.empty()) {
+			result.push_back(MTP_inputPrivacyValueDisallowUsers(MTP_vector<MTPInputUser>(users)));
+		}
+		if (!chats.empty()) {
+			result.push_back(MTP_inputPrivacyValueDisallowChatParticipants(MTP_vector<MTPint>(chats)));
+		}
 	}
 	result.push_back([&] {
 		switch (_value.option) {
@@ -162,7 +230,7 @@ QVector<MTPInputPrivacyRule> EditPrivacyBox::collectResult() {
 	return result;
 }
 
-std::vector<not_null<UserData*>> &EditPrivacyBox::exceptionUsers(Exception exception) {
+std::vector<not_null<PeerData*>> &EditPrivacyBox::exceptions(Exception exception) {
 	switch (exception) {
 	case Exception::Always: return _value.always;
 	case Exception::Never: return _value.never;
@@ -184,27 +252,20 @@ bool EditPrivacyBox::showExceptionLink(Exception exception) const {
 
 Ui::Radioenum<EditPrivacyBox::Option> *EditPrivacyBox::AddOption(
 		not_null<Ui::VerticalLayout*> container,
+		not_null<EditPrivacyController*> controller,
 		const std::shared_ptr<Ui::RadioenumGroup<Option>> &group,
 		Option option) {
-	const auto label = [&] {
-		switch (option) {
-		case Option::Everyone: return lng_edit_privacy_everyone;
-		case Option::Contacts: return lng_edit_privacy_contacts;
-		case Option::Nobody: return lng_edit_privacy_nobody;
-		}
-		Unexpected("Option value in EditPrivacyBox::AddOption.");
-	}();
 	return container->add(
 		object_ptr<Ui::Radioenum<Option>>(
 			container,
 			group,
 			option,
-			lang(label),
+			controller->optionLabel(option),
 			st::settingsSendType),
 		st::settingsSendTypePadding);
 }
 
-Ui::FlatLabel *EditPrivacyBox::AddLabel(
+Ui::FlatLabel *EditPrivacyBox::addLabel(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> text) {
 	const auto wrap = container->add(
@@ -227,7 +288,7 @@ Ui::FlatLabel *EditPrivacyBox::AddLabel(
 void EditPrivacyBox::setupContent() {
 	using namespace Settings;
 
-	setTitle([=] { return _controller->title(); });
+	setTitle(_controller->title());
 
 	auto wrap = object_ptr<Ui::VerticalLayout>(this);
 	const auto content = wrap.data();
@@ -237,30 +298,28 @@ void EditPrivacyBox::setupContent() {
 
 	const auto group = std::make_shared<Ui::RadioenumGroup<Option>>(
 		_value.option);
-	const auto toggle = Ui::AttachAsChild(content, rpl::event_stream<>());
-
+	const auto toggle = Ui::CreateChild<rpl::event_stream<Option>>(content);
 	group->setChangedCallback([=](Option value) {
 		_value.option = value;
-		toggle->fire({});
+		toggle->fire_copy(value);
 	});
+	auto optionValue = toggle->events_starting_with_copy(_value.option);
 
-	const auto addOption = [&](Option option) {
+	const auto addOptionRow = [&](Option option) {
 		return (_controller->hasOption(option) || (_value.option == option))
-			? AddOption(content, group, option)
+			? AddOption(content, _controller.get(), group, option)
 			: nullptr;
 	};
 	const auto addExceptionLink = [=](Exception exception) {
-		const auto update = Ui::AttachAsChild(
-			content,
-			rpl::event_stream<>());
+		const auto update = Ui::CreateChild<rpl::event_stream<>>(content);
 		auto label = update->events_starting_with(
 			rpl::empty_value()
 		) | rpl::map([=] {
-			return exceptionUsers(exception).size();
+			return Settings::ExceptionUsersCount(exceptions(exception));
 		}) | rpl::map([](int count) {
 			return count
-				? lng_edit_privacy_exceptions_count(lt_count, count)
-				: lang(lng_edit_privacy_exceptions_add);
+				? tr::lng_edit_privacy_exceptions_count(tr::now, lt_count, count)
+				: tr::lng_edit_privacy_exceptions_add(tr::now);
 		});
 		auto text = _controller->exceptionButtonTextKey(exception);
 		const auto button = content->add(
@@ -268,54 +327,69 @@ void EditPrivacyBox::setupContent() {
 				content,
 				object_ptr<Button>(
 					content,
-					Lang::Viewer(text),
+					rpl::duplicate(text),
 					st::settingsButton)));
 		CreateRightLabel(
 			button->entity(),
 			std::move(label),
 			st::settingsButton,
-			text);
-		button->toggleOn(toggle->events_starting_with(
-			rpl::empty_value()
+			std::move(text));
+		button->toggleOn(rpl::duplicate(
+			optionValue
 		) | rpl::map([=] {
 			return showExceptionLink(exception);
 		}))->entity()->addClickHandler([=] {
-			editExceptionUsers(exception, [=] { update->fire({}); });
+			editExceptions(exception, [=] { update->fire({}); });
 		});
 		return button;
 	};
 
+	auto above = _controller->setupAboveWidget(
+		content,
+		rpl::duplicate(optionValue));
+	if (above) {
+		content->add(std::move(above));
+	}
+
 	AddSubsectionTitle(content, _controller->optionsTitleKey());
-	addOption(Option::Everyone);
-	addOption(Option::Contacts);
-	addOption(Option::Nobody);
-	AddLabel(content, _controller->warning());
+	addOptionRow(Option::Everyone);
+	addOptionRow(Option::Contacts);
+	addOptionRow(Option::Nobody);
+	addLabel(content, _controller->warning());
 	AddSkip(content);
+
+	auto middle = _controller->setupMiddleWidget(
+		_window,
+		content,
+		std::move(optionValue));
+	if (middle) {
+		content->add(std::move(middle));
+	}
 
 	AddDivider(content);
 	AddSkip(content);
-	AddSubsectionTitle(content, lng_edit_privacy_exceptions);
+	AddSubsectionTitle(content, tr::lng_edit_privacy_exceptions());
 	const auto always = addExceptionLink(Exception::Always);
 	const auto never = addExceptionLink(Exception::Never);
-	AddLabel(content, _controller->exceptionsDescription());
+	addLabel(content, _controller->exceptionsDescription());
 	AddSkip(content);
 
-	const auto saveAdditional = _controller->setupAdditional(content);
+	if (auto below = _controller->setupBelowWidget(_window, content)) {
+		content->add(std::move(below));
+	}
 
-	addButton(langFactory(lng_settings_save), [=] {
+	addButton(tr::lng_settings_save(), [=] {
 		const auto someAreDisallowed = (_value.option != Option::Everyone)
 			|| !_value.never.empty();
 		_controller->confirmSave(someAreDisallowed, crl::guard(this, [=] {
-			Auth().api().savePrivacy(
+			_controller->saveAdditional();
+			_window->session().api().savePrivacy(
 				_controller->apiKey(),
 				collectResult());
-			if (saveAdditional) {
-				saveAdditional();
-			}
 			closeBox();
 		}));
 	});
-	addButton(langFactory(lng_cancel), [this] { closeBox(); });
+	addButton(tr::lng_cancel(), [this] { closeBox(); });
 
 	const auto linkHeight = st::settingsButton.padding.top()
 		+ st::settingsButton.height

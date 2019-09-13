@@ -14,9 +14,13 @@ class UsernameInput;
 class LinkButton;
 } // namespace Ui
 
+namespace Main {
+class Session;
+} // namespace Main
+
 class UsernameBox : public BoxContent, public RPCSender {
 public:
-	UsernameBox(QWidget*);
+	UsernameBox(QWidget*, not_null<Main::Session*> session);
 
 protected:
 	void prepare() override;
@@ -42,6 +46,8 @@ private:
 	QString getName() const;
 	void updateLinkText();
 
+	const not_null<Main::Session*> _session;
+
 	object_ptr<Ui::UsernameInput> _username;
 	object_ptr<Ui::LinkButton> _link;
 
@@ -49,7 +55,7 @@ private:
 	mtpRequestId _checkRequestId = 0;
 	QString _sentUsername, _checkUsername, _errorText, _goodText;
 
-	Text _about;
+	Ui::Text::String _about;
 	object_ptr<QTimer> _checkTimer;
 
 };

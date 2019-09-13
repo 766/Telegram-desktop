@@ -18,10 +18,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/tooltip.h"
 #include "window/layer_widget.h"
 #include "window/themes/window_theme.h"
-#include "messenger.h"
+#include "core/application.h"
 #include "styles/style_widgets.h"
 #include "styles/style_info.h"
 #include "styles/style_calls.h"
+
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QDesktopWidget>
 
 namespace Ui {
 
@@ -61,7 +64,7 @@ void SeparatePanel::initControls() {
 			st::fadeWrapDuration);
 	}, _back->lifetime());
 	_back->hide(anim::type::instant);
-	_titleLeft.finish();
+	_titleLeft.stop();
 }
 
 void SeparatePanel::updateTitleGeometry(int newWidth) {
@@ -75,7 +78,7 @@ void SeparatePanel::updateTitlePosition() {
 	if (!_title) {
 		return;
 	}
-	const auto progress = _titleLeft.current(_back->toggled() ? 1. : 0.);
+	const auto progress = _titleLeft.value(_back->toggled() ? 1. : 0.);
 	const auto left = anim::interpolate(
 		st::separatePanelTitleLeft,
 		_back->width() + st::separatePanelTitleSkip,
@@ -277,7 +280,7 @@ void SeparatePanel::ensureLayerCreated() {
 	if (_layer) {
 		return;
 	}
-	_layer.create(_body);
+	_layer = base::make_unique_q<Window::LayerStackWidget>(_body);
 	_layer->setHideByBackgroundClick(false);
 	_layer->move(0, 0);
 	_body->sizeValue(
@@ -285,16 +288,24 @@ void SeparatePanel::ensureLayerCreated() {
 		_layer->resize(size);
 	}, _layer->lifetime());
 	_layer->hideFinishEvents(
-	) | rpl::start_with_next([=, pointer = _layer.data()]{
-		if (_layer != pointer) {
-			return;
-		}
-		auto saved = std::exchange(_layer, nullptr);
-		if (Ui::InFocusChain(saved)) {
-			setFocus();
-		}
-		saved.destroyDelayed();
+	) | rpl::filter([=] {
+		return _layer != nullptr; // Last hide finish is sent from destructor.
+	}) | rpl::start_with_next([=] {
+		destroyLayer();
 	}, _layer->lifetime());
+}
+
+void SeparatePanel::destroyLayer() {
+	if (!_layer) {
+		return;
+	}
+
+	auto layer = base::take(_layer);
+	const auto resetFocus = Ui::InFocusChain(layer);
+	if (resetFocus) {
+		setFocus();
+	}
+	layer = nullptr;
 }
 
 void SeparatePanel::showInner(base::unique_qptr<Ui::RpWidget> inner) {
@@ -337,7 +348,7 @@ void SeparatePanel::setInnerSize(QSize size) {
 }
 
 void SeparatePanel::initGeometry(QSize size) {
-	const auto center = Messenger::Instance().getPointForCallPanelCenter();
+	const auto center = Core::App().getPointForCallPanelCenter();
 	_useTransparency = Platform::TranslucentWindowsSupported(center);
 	_padding = _useTransparency
 		? st::callShadow.extend
@@ -380,9 +391,7 @@ void SeparatePanel::updateControlsGeometry() {
 void SeparatePanel::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 	if (!_animationCache.isNull()) {
-		auto opacity = _opacityAnimation.current(
-			getms(),
-			_visible ? 1. : 0.);
+		auto opacity = _opacityAnimation.value(_visible ? 1. : 0.);
 		if (!_opacityAnimation.animating()) {
 			finishAnimating();
 			if (isHidden()) return;

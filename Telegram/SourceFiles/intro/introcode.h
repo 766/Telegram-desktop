@@ -19,15 +19,13 @@ class FlatLabel;
 namespace Intro {
 
 class CodeInput final : public Ui::MaskedInputField {
-	Q_OBJECT
-
 public:
-	CodeInput(QWidget *parent, const style::InputField &st, Fn<QString()> placeholderFactory);
+	CodeInput(
+		QWidget *parent,
+		const style::InputField &st,
+		rpl::producer<QString> placeholder);
 
 	void setDigitsCountMax(int digitsCount);
-
-signals:
-	void codeEntered();
 
 protected:
 	void correctValue(const QString &was, int wasCursor, QString &now, int &nowCursor) override;
@@ -41,7 +39,10 @@ class CodeWidget : public Widget::Step {
 	Q_OBJECT
 
 public:
-	CodeWidget(QWidget *parent, Widget::Data *data);
+	CodeWidget(
+		QWidget *parent,
+		not_null<Main::Account*> account,
+		not_null<Widget::Data*> data);
 
 	bool hasBack() const override {
 		return true;
@@ -71,7 +72,7 @@ private:
 	void codeSubmitDone(const MTPauth_Authorization &result);
 	bool codeSubmitFail(const RPCError &error);
 
-	void showCodeError(Fn<QString()> textFactory);
+	void showCodeError(rpl::producer<QString> text);
 	void callDone(const MTPauth_SentCode &v);
 	void gotPassword(const MTPaccount_Password &result);
 

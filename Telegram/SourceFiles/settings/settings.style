@@ -17,6 +17,10 @@ settingsSectionButton: InfoProfileButton(infoProfileButton) {
 settingsButton: InfoProfileButton(settingsSectionButton) {
 	padding: margins(22px, 10px, 22px, 8px);
 }
+settingsAttentionButton: InfoProfileButton(settingsButton) {
+	textFg: attentionButtonFg;
+	textFgOver: attentionButtonFgOver;
+}
 settingsSectionSkip: 9px;
 settingsSectionIconLeft: 22px;
 settingsSeparatorPadding: margins(22px, infoProfileSkip, 0px, infoProfileSkip);
@@ -54,6 +58,7 @@ settingsIconLanguage: icon {{ "settings_language", menuIconFg }};
 settingsIconInterfaceScale: icon {{ "settings_interface_scale", menuIconFg }};
 settingsIconFaq: icon {{ "settings_faq", menuIconFg }};
 settingsIconStickers: icon {{ "settings_stickers", menuIconFg }};
+settingsIconEmoji: icon {{ "settings_emoji", menuIconFg }};
 settingsIconThemes: icon {{ "settings_themes", menuIconFg }};
 
 settingsSetPhotoSkip: 7px;
@@ -80,6 +85,7 @@ settingsSubsectionTitle: FlatLabel(defaultFlatLabel) {
 		linkFontOver: font(boxFontSize semibold underline);
 	}
 	textFg: windowActiveTextFg;
+	minWidth: 240px;
 }
 settingsSubsectionTitlePadding: margins(22px, 7px, 10px, 9px);
 settingsBackgroundPadding: margins(22px, 11px, 10px, 12px);
@@ -168,7 +174,7 @@ settingsTheme: Checkbox(defaultCheckbox) {
 	width: 80px;
 	margin: margins(0px, 0px, 0px, 0px);
 
-	textPosition: point(0px, 86px);
+	textPosition: point(0px, 99px);
 	checkPosition: point(0px, 0px);
 
 	style: defaultTextStyle;
@@ -176,10 +182,36 @@ settingsTheme: Checkbox(defaultCheckbox) {
 	disabledOpacity: 0.5;
 }
 
-settingsThemePreviewSize: size(80px, 80px);
+settingsThemePreviewSize: size(80px, 92px);
 settingsThemeBubbleSize: size(40px, 14px);
 settingsThemeBubbleRadius: 2px;
 settingsThemeBubblePosition: point(6px, 8px);
-settingsThemeBubbleSkip: 4px;
-settingsThemeRadioBottom: 8px;
+settingsThemeBubbleSkip: 6px;
+settingsThemeRadioBottom: 12px;
 settingsThemeMinSkip: 4px;
+
+settingsThemeNotSupportedBg: windowBgOver;
+settingsThemeNotSupportedIcon: icon {{ "theme_preview", menuIconFg }};
+
+autoDownloadLimitButton: InfoProfileButton(settingsButton) {
+	padding: margins(22px, 10px, 22px, 0px);
+}
+settingsAudioVolumeSlider: MediaSlider(defaultContinuousSlider) {
+    seekSize: size(15px, 15px);
+}
+settingsAudioVolumeSliderPadding: margins(23px, 5px, 20px, 10px);
+settingsAudioVolumeLabel: LabelSimple(defaultLabelSimple) {
+    font: boxTextFont;
+    textFg: windowBoldFg;
+}
+settingsAudioVolumeLabelPadding: margins(22px, 11px, 22px, 11px);
+settingsLevelMeterPadding: margins(23px, 10px, 20px, 10px);
+
+settingsForwardPrivacyPadding: 8px;
+settingsForwardPrivacyArrowSkip: 32px;
+settingsForwardPrivacyArrowSize: 6px;
+settingsForwardPrivacyTooltipPadding: margins(8px, 6px, 8px, 6px);
+
+settingsAccentColorSize: 24px;
+settingsAccentColorSkip: 4px;
+settingsAccentColorLine: 3px;

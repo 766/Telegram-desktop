@@ -19,48 +19,49 @@ namespace {
 std::map<int, const char*> BetaLogs() {
 	return {
 	{
-		1002024,
-		"\xE2\x80\x94 Add links with custom text from context menu "
-		"or by Ctrl/Cmd + K keyboard shortcut."
+		1006004,
+		"- Replace media when editing messages with media content.\n"
+
+		"- Jump quickly to the top of your chats list.\n"
+
+		"- Get emoji suggestions for the first word you type in a message.\n"
+
+		"- Help Telegram improve emoji suggestions in your language "
+		"using this interface https://translations.telegram.org/en/emoji"
 	},
 	{
-		1002025,
-		"\xE2\x80\x94 Apply markdown formatting (```, `, **, __) "
-		"only when sending the message.\n"
-
-		"\xE2\x80\x94 Display connection quality bars in calls.\n"
-
-		"\xE2\x80\x94 Telegram Desktop can update itself through MTProto.\n"
-
-		"\xE2\x80\x94 Bug fixes and other minor improvements."
+		1007001,
+		"- Disable pinned messages notifications in Settings."
 	},
 	{
-		1003011,
-		"\xE2\x80\x94 Added a new night theme.\n"
-
-		"\xE2\x80\x94 You can now assign custom themes "
-		"as night and day themes to quickly switch between them."
+		1007004,
+		"- Download video files while watching them using streaming."
 	},
 	{
-		1003015,
-		"\xE2\x80\x94 Improved local caching "
-		"for images and GIF animations.\n"
+		1007008,
+		"\xE2\x80\xA2 Hide archived chats in the main menu.\n"
 
-		"\xE2\x80\x94 Control how much disk space is used by the cache "
-		"and for how long the cached files are stored."
+		"\xE2\x80\xA2 See who is online straight from the chat list.\n"
+
+		"\xE2\x80\xA2 Apply formatting to selected text parts "
+		"from the MacBook Pro TouchBar."
 	},
 	{
-		1003017,
-		"\xE2\x80\x94 Fully redisigned Settings section.\n"
+		1007011,
+		"\xE2\x80\xA2 Use strikethrough and underline formatting.\n"
 
-		"\xE2\x80\x94 New theme selector in Chat Settings.\n"
-		"\xE2\x80\x94 New settings: Peer-to-Peer settings for calls, "
-		"disable animations for low performance computers.\n"
+		"\xE2\x80\xA2 Bug fixes and other minor improvements."
+	},
+	{
+		1008005,
+		"\xE2\x80\xA2 Create new themes based on your color and wallpaper choices.\n"
 
-		"\xE2\x80\x94 Various other improvements."
+		"\xE2\x80\xA2 Share your themes with other users via links.\n"
+
+		"\xE2\x80\xA2 Update your theme for all its users when you change something.\n"
 	},
 	};
-}
+};
 
 QString FormatVersionDisplay(int version) {
 	return QString::number(version / 1000000)
@@ -78,16 +79,19 @@ QString FormatVersionPrecise(int version) {
 
 } // namespace
 
-Changelogs::Changelogs(not_null<AuthSession*> session, int oldVersion)
+Changelogs::Changelogs(not_null<Main::Session*> session, int oldVersion)
 : _session(session)
 , _oldVersion(oldVersion) {
-	_chatsSubscription = subscribe(
-		_session->data().moreChatsLoaded(),
-		[this] { requestCloudLogs(); });
+	_session->data().chatsListChanges(
+	) | rpl::filter([](Data::Folder *folder) {
+		return !folder;
+	}) | rpl::start_with_next([=] {
+		requestCloudLogs();
+	}, _chatsSubscription);
 }
 
 std::unique_ptr<Changelogs> Changelogs::Create(
-		not_null<AuthSession*> session) {
+		not_null<Main::Session*> session) {
 	const auto oldVersion = Local::oldMapVersion();
 	return (oldVersion > 0 && oldVersion < AppVersion)
 		? std::make_unique<Changelogs>(session, oldVersion)
@@ -95,7 +99,7 @@ std::unique_ptr<Changelogs> Changelogs::Create(
 }
 
 void Changelogs::requestCloudLogs() {
-	unsubscribe(base::take(_chatsSubscription));
+	_chatsSubscription.destroy();
 
 	const auto callback = [this](const MTPUpdates &result) {
 		_session->api().applyUpdates(result);
@@ -108,10 +112,10 @@ void Changelogs::requestCloudLogs() {
 			resultEmpty = false;
 			break;
 		case mtpc_updatesCombined:
-			resultEmpty = result.c_updatesCombined().vupdates.v.isEmpty();
+			resultEmpty = result.c_updatesCombined().vupdates().v.isEmpty();
 			break;
 		case mtpc_updates:
-			resultEmpty = result.c_updates().vupdates.v.isEmpty();
+			resultEmpty = result.c_updates().vupdates().v.isEmpty();
 			break;
 		case mtpc_updatesTooLong:
 		case mtpc_updateShortSentMessage:
@@ -132,11 +136,12 @@ void Changelogs::addLocalLogs() {
 		addBetaLogs();
 	}
 	if (!_addedSomeLocal) {
-		const auto text = lng_new_version_wrap(
+		const auto text = tr::lng_new_version_wrap(
+			tr::now,
 			lt_version,
-			str_const_toString(AppVersionStr),
+			QString::fromLatin1(AppVersionStr),
 			lt_changes,
-			lang(lng_new_version_minor),
+			tr::lng_new_version_minor(tr::now),
 			lt_link,
 			qsl("https://desktop.telegram.org/changelog"));
 		addLocalLog(text.trimmed());
@@ -146,14 +151,12 @@ void Changelogs::addLocalLogs() {
 void Changelogs::addLocalLog(const QString &text) {
 	auto textWithEntities = TextWithEntities{ text };
 	TextUtilities::ParseEntities(textWithEntities, TextParseLinks);
-	_session->data().serviceNotification(
-		textWithEntities,
-		MTP_messageMediaEmpty());
+	_session->data().serviceNotification(textWithEntities);
 	_addedSomeLocal = true;
 };
 
 void Changelogs::addBetaLogs() {
-	for (const auto[version, changes] : BetaLogs()) {
+	for (const auto [version, changes] : BetaLogs()) {
 		addBetaLog(version, changes);
 	}
 }

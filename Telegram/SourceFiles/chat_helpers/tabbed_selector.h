@@ -8,9 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/rp_widget.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/panel_animation.h"
 #include "mtproto/sender.h"
-#include "auth_session.h"
+#include "main/main_session.h"
 
 namespace InlineBots {
 class Result;
@@ -24,7 +25,7 @@ class FlatLabel;
 } // namesapce Ui
 
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 namespace ChatHelpers {
@@ -40,14 +41,35 @@ class StickersListWidget;
 class GifsListWidget;
 
 class TabbedSelector : public Ui::RpWidget, private base::Subscriber {
-	Q_OBJECT
-
 public:
-	TabbedSelector(QWidget *parent, not_null<Window::Controller*> controller);
+	struct InlineChosen {
+		not_null<InlineBots::Result*> result;
+		not_null<UserData*> bot;
+	};
+	enum class Mode {
+		Full,
+		EmojiOnly
+	};
+
+	TabbedSelector(
+		QWidget *parent,
+		not_null<Window::SessionController*> controller,
+		Mode mode = Mode::Full);
+	~TabbedSelector();
+
+	Main::Session &session() const;
+
+	rpl::producer<EmojiPtr> emojiChosen() const;
+	rpl::producer<not_null<DocumentData*>> fileChosen() const;
+	rpl::producer<not_null<PhotoData*>> photoChosen() const;
+	rpl::producer<InlineChosen> inlineResultChosen() const;
+
+	rpl::producer<> cancelled() const;
+	rpl::producer<> checkForHide() const;
+	rpl::producer<> slideFinished() const;
 
 	void setRoundRadius(int radius);
 	void refreshStickers();
-	void showMegagroupSet(ChannelData *megagroup);
 	void setCurrentPeer(PeerData *peer);
 
 	void hideFinished();
@@ -57,6 +79,7 @@ public:
 
 	int marginTop() const;
 	int marginBottom() const;
+	int scrollTop() const;
 
 	bool preventAutoHide() const;
 	bool isSliding() const {
@@ -78,29 +101,12 @@ public:
 		return _showRequests.events();
 	}
 
-	~TabbedSelector();
-
 	class Inner;
 	class InnerFooter;
 
 protected:
 	void paintEvent(QPaintEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;
-
-private slots:
-	void onScroll();
-
-signals:
-	void emojiSelected(EmojiPtr emoji);
-	void stickerOrGifSelected(not_null<DocumentData*> sticker);
-	void photoSelected(not_null<PhotoData*> photo);
-	void inlineResultSelected(
-		not_null<InlineBots::Result*> result,
-		not_null<UserData*> bot);
-
-	void cancelled();
-	void slideFinished();
-	void checkForHide();
 
 private:
 	class Tab {
@@ -115,7 +121,7 @@ private:
 		SelectorTab type() const {
 			return _type;
 		}
-		not_null<Inner*> widget() const {
+		Inner *widget() const {
 			return _weak;
 		}
 		not_null<InnerFooter*> footer() const {
@@ -139,12 +145,16 @@ private:
 
 	};
 
-	void paintSlideFrame(Painter &p, TimeMs ms);
+	bool full() const;
+	Tab createTab(SelectorTab type);
+
+	void paintSlideFrame(Painter &p);
 	void paintContent(Painter &p);
 
 	void checkRestrictedPeer();
 	bool isRestrictedView();
 	void updateRestrictedLabelGeometry();
+	void handleScroll();
 
 	QImage grabForAnimation();
 
@@ -173,13 +183,16 @@ private:
 	not_null<StickersListWidget*> stickers() const;
 	not_null<GifsListWidget*> gifs() const;
 
+	const not_null<Window::SessionController*> _controller;
+
+	Mode _mode = Mode::Full;
 	int _roundRadius = 0;
 	int _footerTop = 0;
 	PeerData *_currentPeer = nullptr;
 
 	class SlideAnimation;
 	std::unique_ptr<SlideAnimation> _slideAnimation;
-	Animation _a_slide;
+	Ui::Animations::Simple _a_slide;
 
 	object_ptr<Ui::SettingsSlider> _tabsSlider = { nullptr };
 	object_ptr<Ui::PlainShadow> _topShadow;
@@ -193,14 +206,17 @@ private:
 	Fn<void(SelectorTab)> _beforeHidingCallback;
 
 	rpl::event_stream<> _showRequests;
+	rpl::event_stream<> _slideFinished;
 
 };
 
 class TabbedSelector::Inner : public Ui::RpWidget {
-	Q_OBJECT
-
 public:
-	Inner(QWidget *parent, not_null<Window::Controller*> controller);
+	Inner(QWidget *parent, not_null<Window::SessionController*> controller);
+
+	not_null<Window::SessionController*> controller() const {
+		return _controller;
+	}
 
 	int getVisibleTop() const {
 		return _visibleTop;
@@ -222,11 +238,10 @@ public:
 	virtual void beforeHiding() {
 	}
 
-	virtual object_ptr<InnerFooter> createFooter() = 0;
+	rpl::producer<int> scrollToRequests() const;
+	rpl::producer<bool> disableScrollRequests() const;
 
-signals:
-	void scrollToY(int y);
-	void disableScroll(bool disabled);
+	virtual object_ptr<InnerFooter> createFooter() = 0;
 
 protected:
 	void visibleTopBottomUpdated(
@@ -235,10 +250,6 @@ protected:
 	int minimalHeight() const;
 	int resizeGetHeight(int newWidth) override final;
 
-	not_null<Window::Controller*> controller() const {
-		return _controller;
-	}
-
 	virtual int countDesiredHeight(int newWidth) = 0;
 	virtual InnerFooter *getFooter() const = 0;
 	virtual void processHideFinished() {
@@ -246,12 +257,18 @@ protected:
 	virtual void processPanelHideFinished() {
 	}
 
+	void scrollTo(int y);
+	void disableScroll(bool disabled);
+
 private:
-	not_null<Window::Controller*> _controller;
+	not_null<Window::SessionController*> _controller;
 
 	int _visibleTop = 0;
 	int _visibleBottom = 0;
 	int _minimalHeight = 0;
+
+	rpl::event_stream<int> _scrollToRequests;
+	rpl::event_stream<bool> _disableScrollRequests;
 
 };
 

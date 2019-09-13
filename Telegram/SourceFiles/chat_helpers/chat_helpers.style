@@ -151,6 +151,9 @@ emojiPanHover: windowBgOver;
 emojiPanSlideDuration: 200;
 emojiPanDesiredSize: 45px;
 
+inlineResultsMinHeight: 278px;
+inlineResultsMaxHeight: 640px;
+
 emojiPanHeader: 42px;
 emojiPanHeaderFont: semiboldFont;
 emojiPanHeaderLeft: 22px;
@@ -224,20 +227,13 @@ gifsSearchIcon: boxFieldSearchIcon;
 gifsSearchIconPosition: point(6px, 7px);
 
 emojiSuggestionsDropdown: InnerDropdown(defaultInnerDropdown) {
-	scroll: ScrollArea(defaultSolidScroll) {
-		deltat: 0px;
-		deltab: 0px;
-		round: 1px;
-		width: 8px;
-		deltax: 3px;
-	}
-	scrollMargin: margins(0px, 5px, 0px, 5px);
-	scrollPadding: margins(0px, 3px, 0px, 3px);
+	scrollMargin: margins(0px, emojiColorsPadding, 0px, emojiColorsPadding);
+	scrollPadding: margins(0px, 0px, 0px, 0px);
 }
-emojiSuggestionsMenu: Menu(defaultMenu) {
-	itemPadding: margins(48px, 8px, 17px, 7px);
-	widthMax: 512px;
-}
+emojiSuggestionSize: 40px;
+emojiSuggestionsScrolledWidth: 240px;
+emojiSuggestionsPadding: margins(emojiColorsPadding, 0px, emojiColorsPadding, 0px);
+emojiSuggestionsFadeAfter: 20px;
 
 mentionHeight: 40px;
 mentionScroll: ScrollArea(defaultScrollArea) {
@@ -262,3 +258,11 @@ autocompleteRowPadding: margins(16px, 5px, 16px, 5px);
 autocompleteRowTitle: semiboldTextStyle;
 autocompleteRowKeys: defaultTextStyle;
 autocompleteRowAnswer: defaultTextStyle;
+
+manageEmojiPreview: 22px;
+manageEmojiPreviewWidth: 48px;
+manageEmojiPreviewHeight: 48px;
+manageEmojiPreviewPadding: margins(23px, 9px, 19px, 9px);
+manageEmojiMarginRight: 21px;
+manageEmojiNameTop: 3px;
+manageEmojiStatusTop: 25px;

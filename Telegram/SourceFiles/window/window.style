@@ -84,7 +84,7 @@ notifySendReply: IconButton {
 	iconPosition: point(6px, 6px);
 }
 
-titleUnreadCounterTop: 5px;
+titleUnreadCounterTop: 6px;
 titleUnreadCounterRight: 35px;
 
 mainMenuWidth: 274px;
@@ -96,8 +96,8 @@ mainMenuUserpic: UserpicButton(defaultUserpicButton) {
 	photoSize: 48px;
 }
 mainMenuCloudButton: IconButton {
-	width: 64px;
-	height: 64px;
+	width: 48px;
+	height: 48px;
 
 	icon: icon {
 //		{ "menu_cloud", mainMenuCloudFg },
@@ -105,6 +105,11 @@ mainMenuCloudButton: IconButton {
 	iconPosition: point(22px, 22px);
 }
 mainMenuCloudSize: 32px;
+mainMenuResetScaleFont: font(20px semibold);
+mainMenuResetScaleLeft: 36px;
+mainMenuResetScaleRight: 12px;
+mainMenuResetScaleTop: 2px;
+mainMenuResetScaleIconLeft: 5px;
 mainMenuCoverTextLeft: 30px;
 mainMenuCoverNameTop: 84px;
 mainMenuCoverStatusTop: 102px;
@@ -123,6 +128,7 @@ mainMenu: Menu(defaultMenu) {
 	}
 	itemToggleShift: 11px;
 }
+mainMenuShadow: icon {{ "menu_shadow", windowShadowFg }};
 mainMenuNewGroup: icon {{ "menu_new_group", menuIconFg }};
 mainMenuNewGroupOver: icon {{ "menu_new_group", menuIconFgOver }};
 mainMenuNewChannel: icon {{ "menu_new_channel", menuIconFg }};
@@ -271,6 +277,53 @@ connectingRetryLink: LinkButton(defaultLinkButton) {
 connectingProxyOff: icon {{ "proxy_off", menuIconFg }};
 connectingProxyOn: icon {{ "proxy_on", windowBgActive }};
 connectingDuration: 150;
+
+windowOutdatedDetails: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	minWidth: 100px;
+	textFg: outdatedFg;
+}
+windowOutdatedTitle: FlatLabel(windowOutdatedDetails) {
+	style: semiboldTextStyle;
+}
+windowOutdatedPadding: margins(10px, 10px, 10px, 10px);
+windowOutdatedSkip: 6px;
+windowOutdatedClose: IconButton(defaultIconButton) {
+	width: 60px;
+	height: 60px;
+	icon: icon {{ "info_close", outdatedFg }};
+	iconOver: icon {{ "info_close", outdatedFg }};
+	iconPosition: point(-1px, -1px);
+}
+
+createThemeImportButton: InfoProfileButton {
+	textFg: lightButtonFg;
+	textFgOver: lightButtonFgOver;
+	textBg: windowBg;
+	textBgOver: windowBgOver;
+
+	font: semiboldFont;
+
+	height: 20px;
+	padding: margins(23px, 10px, 23px, 8px);
+
+	ripple: defaultRippleAnimation;
+}
+createThemeLink: InputField(defaultInputField) {
+	textMargins: margins(0px, 7px, 0px, 0px);
+	textBg: boxBg;
+
+	placeholderFg: placeholderFg;
+	placeholderFgActive: placeholderFgActive;
+	placeholderFgError: placeholderFgActive;
+	placeholderMargins: margins(0px, 0px, 0px, 0px);
+	placeholderScale: 0.;
+	placeholderFont: boxTextFont;
+
+	heightMin: 34px;
+
+	font: boxTextFont;
+}
 
 // Mac specific
 

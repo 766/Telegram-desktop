@@ -9,6 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class FileLoader;
 
+namespace Data {
+class LocationPoint;
+} // namespace Data
+
 namespace InlineBots {
 
 namespace Layout {
@@ -44,17 +48,26 @@ public:
 	// inline bot result. If it returns true you need to send this result.
 	bool onChoose(Layout::ItemBase *layout);
 
-	void forget();
+	void unload();
 	void openFile();
 	void cancelFile();
 
 	bool hasThumbDisplay() const;
 
-	void addToHistory(History *history, MTPDmessage::Flags flags, MsgId msgId, UserId fromId, MTPint mtpDate, UserId viaBotId, MsgId replyToId, const QString &postAuthor) const;
+	void addToHistory(
+		History *history,
+		MTPDmessage::Flags flags,
+		MTPDmessage_ClientFlags clientFlags,
+		MsgId msgId,
+		UserId fromId,
+		MTPint mtpDate,
+		UserId viaBotId,
+		MsgId replyToId,
+		const QString &postAuthor) const;
 	QString getErrorOnSend(History *history) const;
 
 	// interface for Layout:: usage
-	bool getLocationCoords(LocationCoords *outLocation) const;
+	std::optional<Data::LocationPoint> getLocationPoint() const;
 	QString getLayoutTitle() const;
 	QString getLayoutDescription() const;
 

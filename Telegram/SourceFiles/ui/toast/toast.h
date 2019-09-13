@@ -7,20 +7,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "ui/effects/animations.h"
+
 namespace Ui {
 namespace Toast {
 
 namespace internal {
-	class Manager;
-	class Widget;
+class Manager;
+class Widget;
 } // namespace internal
 
 static constexpr const int DefaultDuration = 1500;
 struct Config {
 	QString text;
-	int durationMs = DefaultDuration;
-	int maxWidth = 0;
 	QMargins padding;
+	int durationMs = DefaultDuration;
+	int minWidth = 0;
+	int maxWidth = 0;
+	int maxLines = 16;
+	bool multiline = false;
 };
 void Show(QWidget *parent, const Config &config);
 void Show(const Config &config);
@@ -43,9 +48,9 @@ private:
 	void opacityAnimationCallback();
 
 	bool _hiding = false;
-	Animation _a_opacity;
+	Ui::Animations::Simple _a_opacity;
 
-	const TimeMs _hideAtMs;
+	const crl::time _hideAtMs;
 
 	// ToastManager should reset _widget pointer if _widget is destroyed.
 	friend class internal::Manager;

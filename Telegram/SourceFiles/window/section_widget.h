@@ -10,9 +10,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "dialogs/dialogs_key.h"
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Window {
 
-class Controller;
+class SessionController;
 class LayerWidget;
 class SlideAnimation;
 struct SectionShow;
@@ -30,26 +34,36 @@ class AbstractSectionWidget
 public:
 	AbstractSectionWidget(
 		QWidget *parent,
-		not_null<Window::Controller*> controller)
-		: RpWidget(parent)
-		, _controller(controller) {
+		not_null<Window::SessionController*> controller)
+	: RpWidget(parent)
+	, _controller(controller) {
+	}
+
+	[[nodiscard]] Main::Session &session() const;
+
+	// Tabbed selector management.
+	virtual void pushTabbedSelectorToThirdSection(
+		const Window::SectionShow &params) {
+	}
+	virtual bool returnTabbedSelector() {
+		return false;
 	}
 
 	// Float player interface.
 	virtual bool wheelEventFromFloatPlayer(QEvent *e) {
 		return false;
 	}
-	virtual QRect rectForFloatPlayer() const {
+	[[nodiscard]] virtual QRect rectForFloatPlayer() const {
 		return mapToGlobal(rect());
 	}
 
 protected:
-	not_null<Window::Controller*> controller() const {
+	[[nodiscard]] not_null<Window::SessionController*> controller() const {
 		return _controller;
 	}
 
 private:
-	not_null<Window::Controller*> _controller;
+	const not_null<Window::SessionController*> _controller;
 
 };
 
@@ -68,7 +82,7 @@ struct SectionSlideParams {
 
 class SectionWidget : public AbstractSectionWidget {
 public:
-	SectionWidget(QWidget *parent, not_null<Window::Controller*> controller);
+	SectionWidget(QWidget *parent, not_null<Window::SessionController*> controller);
 
 	virtual Dialogs::RowDescriptor activeChat() const {
 		return {};
@@ -122,12 +136,7 @@ public:
 		return nullptr;
 	}
 
-	// Global shortcut handler. For now that ugly :(
-	virtual bool cmd_search() {
-		return false;
-	}
-
-	static void PaintBackground(QWidget *widget, QPaintEvent *event);
+	static void PaintBackground(not_null<QWidget*> widget, QRect clip);
 
 protected:
 	void paintEvent(QPaintEvent *e) override;

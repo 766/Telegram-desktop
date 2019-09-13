@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/tooltip.h"
+#include "ui/effects/animations.h"
 #include "styles/style_window.h"
 #include "styles/style_widgets.h"
 
@@ -18,12 +19,8 @@ namespace Ui {
 class InfiniteRadialAnimation;
 } // namespace Ui
 
-namespace Data {
-class Feed;
-} // namespace Data
-
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 namespace Ui {
@@ -65,7 +62,7 @@ protected:
 	QPoint prepareRippleStartPosition() const override;
 
 private:
-	void step_loading(TimeMs ms, bool timer);
+	void loadingAnimationCallback();
 
 	const style::IconButton &_st;
 
@@ -81,17 +78,22 @@ class SendButton : public RippleButton {
 public:
 	SendButton(QWidget *parent);
 
+	static constexpr auto kSlowmodeDelayLimit = 100 * 60;
+
 	enum class Type {
 		Send,
+		Schedule,
 		Save,
 		Record,
 		Cancel,
+		Slowmode,
 	};
 	Type type() const {
 		return _type;
 	}
 	void setType(Type state);
 	void setRecordActive(bool recordActive);
+	void setSlowmodeDelay(int seconds);
 	void finishAnimating();
 
 	void setRecordStartCallback(Fn<void()> callback) {
@@ -108,7 +110,7 @@ public:
 	}
 
 	float64 recordActiveRatio() {
-		return _a_recordActive.current(getms(), _recordActive ? 1. : 0.);
+		return _a_recordActive.value(_recordActive ? 1. : 0.);
 	}
 
 protected:
@@ -122,19 +124,31 @@ protected:
 private:
 	void recordAnimationCallback();
 	QPixmap grabContent();
+	bool isSlowmode() const;
+
+	void paintRecord(Painter &p, bool over);
+	void paintSave(Painter &p, bool over);
+	void paintCancel(Painter &p, bool over);
+	void paintSend(Painter &p, bool over);
+	void paintSchedule(Painter &p, bool over);
+	void paintSlowmode(Painter &p);
 
 	Type _type = Type::Send;
+	Type _afterSlowmodeType = Type::Send;
 	bool _recordActive = false;
 	QPixmap _contentFrom, _contentTo;
 
-	Animation _a_typeChanged;
-	Animation _a_recordActive;
+	Ui::Animations::Simple _a_typeChanged;
+	Ui::Animations::Simple _a_recordActive;
 
 	bool _recording = false;
 	Fn<void()> _recordStartCallback;
 	Fn<void(bool active)> _recordStopCallback;
 	Fn<void(QPoint globalPos)> _recordUpdateCallback;
 	Fn<void()> _recordAnimationCallback;
+
+	int _slowmodeDelay = 0;
+	QString _slowmodeDelayText;
 
 };
 
@@ -149,12 +163,12 @@ public:
 
 	UserpicButton(
 		QWidget *parent,
-		PeerId peerForCrop,
+		const QString &cropTitle,
 		Role role,
 		const style::UserpicButton &st);
 	UserpicButton(
 		QWidget *parent,
-		not_null<Window::Controller*> controller,
+		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer,
 		Role role,
 		const style::UserpicButton &st);
@@ -204,53 +218,53 @@ private:
 	void uploadNewPeerPhoto();
 
 	const style::UserpicButton &_st;
-	Window::Controller *_controller = nullptr;
+	Window::SessionController *_controller = nullptr;
 	PeerData *_peer = nullptr;
-	PeerId _peerForCrop = 0;
+	QString _cropTitle;
 	Role _role = Role::ChangePhoto;
 	bool _notShownYet = true;
 	bool _waiting = false;
 	QPixmap _userpic, _oldUserpic;
 	bool _userpicHasImage = false;
 	bool _userpicCustom = false;
-	StorageKey _userpicUniqueKey;
-	Animation _a_appearance;
+	InMemoryKey _userpicUniqueKey;
+	Ui::Animations::Simple _a_appearance;
 	QImage _result;
 
 	bool _showSavedMessagesOnSelf = false;
 	bool _canOpenPhoto = false;
 	bool _cursorInChangeOverlay = false;
 	bool _changeOverlayEnabled = false;
-	Animation _changeOverlayShown;
+	Ui::Animations::Simple _changeOverlayShown;
 
 };
-
-class FeedUserpicButton : public AbstractButton {
-public:
-	FeedUserpicButton(
-		QWidget *parent,
-		not_null<Window::Controller*> controller,
-		not_null<Data::Feed*> feed,
-		const style::FeedUserpicButton &st);
-
-private:
-	struct Part {
-		not_null<ChannelData*> channel;
-		base::unique_qptr<UserpicButton> button;
-	};
-
-	void prepare();
-	void checkParts();
-	bool partsAreValid() const;
-	void refreshParts();
-	QPoint countInnerPosition() const;
-
-	const style::FeedUserpicButton &_st;
-	not_null<Window::Controller*> _controller;
-	not_null<Data::Feed*> _feed;
-	std::vector<Part> _parts;
-
-};
+// // #feed
+//class FeedUserpicButton : public AbstractButton {
+//public:
+//	FeedUserpicButton(
+//		QWidget *parent,
+//		not_null<Window::SessionController*> controller,
+//		not_null<Data::Feed*> feed,
+//		const style::FeedUserpicButton &st);
+//
+//private:
+//	struct Part {
+//		not_null<ChannelData*> channel;
+//		base::unique_qptr<UserpicButton> button;
+//	};
+//
+//	void prepare();
+//	void checkParts();
+//	bool partsAreValid() const;
+//	void refreshParts();
+//	QPoint countInnerPosition() const;
+//
+//	const style::FeedUserpicButton &_st;
+//	not_null<Window::SessionController*> _controller;
+//	not_null<Data::Feed*> _feed;
+//	std::vector<Part> _parts;
+//
+//};
 
 class SilentToggle : public Ui::IconButton, public Ui::AbstractTooltipShower {
 public:

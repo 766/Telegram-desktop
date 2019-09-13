@@ -33,6 +33,8 @@ public:
 		FnMut<void(not_null<CalendarBox*>)> finalize,
 		const style::CalendarSizes &st);
 
+	void setBeginningButton(bool enabled);
+	bool hasBeginningButton() const;
 
 	void setMinDate(QDate date);
 	void setMaxDate(QDate date);
@@ -42,6 +44,7 @@ public:
 protected:
 	void prepare() override;
 
+	void keyPressEvent(QKeyEvent *e) override;
 	void resizeEvent(QResizeEvent *e) override;
 
 private:
@@ -49,6 +52,9 @@ private:
 
 	bool isPreviousEnabled() const;
 	bool isNextEnabled() const;
+
+	void goPreviousMonth();
+	void goNextMonth();
 
 	const style::CalendarSizes &_st;
 

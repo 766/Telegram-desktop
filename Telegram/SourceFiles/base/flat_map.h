@@ -53,12 +53,19 @@ struct flat_multi_map_pair_type {
 	, second(std::forward<OtherValue>(value)) {
 	}
 
-	flat_multi_map_pair_type(const flat_multi_map_pair_type&) = default;
-	flat_multi_map_pair_type(flat_multi_map_pair_type&&) = default;
+	flat_multi_map_pair_type(const flat_multi_map_pair_type &pair)
+	: first(pair.first)
+	, second(pair.second) {
+	}
+
+	flat_multi_map_pair_type(flat_multi_map_pair_type &&pair)
+	: first(std::move(const_cast<Key&>(pair.first)))
+	, second(std::move(pair.second)) {
+	}
 
 	flat_multi_map_pair_type &operator=(const flat_multi_map_pair_type&) = delete;
 	flat_multi_map_pair_type &operator=(flat_multi_map_pair_type &&other) {
-		const_cast<Key&>(first) = other.first;
+		const_cast<Key&>(first) = std::move(const_cast<Key&>(other.first));
 		second = std::move(other.second);
 		return *this;
 	}
@@ -76,6 +83,7 @@ struct flat_multi_map_pair_type {
 
 	const Key first;
 	Value second;
+
 };
 
 template <
@@ -316,6 +324,18 @@ public:
 	}
 	flat_multi_map &operator=(flat_multi_map &&other) = default;
 
+	template <
+		typename Iterator,
+		typename = typename std::iterator_traits<Iterator>::iterator_category>
+	flat_multi_map(Iterator first, Iterator last)
+	: _data(first, last) {
+		std::sort(std::begin(impl()), std::end(impl()), compare());
+	}
+
+	flat_multi_map(std::initializer_list<pair_type> iter)
+	: flat_multi_map(iter.begin(), iter.end()) {
+	}
+
 	size_type size() const {
 		return impl().size();
 	}
@@ -461,6 +481,28 @@ public:
 		return compare()(key, where->first) ? impl().end() : where;
 	}
 
+	template <typename OtherKey>
+	iterator findFirst(const OtherKey &key) {
+		if (empty()
+			|| compare()(key, front().first)
+			|| compare()(back().first, key)) {
+			return end();
+		}
+		auto where = getLowerBound(key);
+		return compare()(key, where->first) ? impl().end() : where;
+	}
+
+	template <typename OtherKey>
+	const_iterator findFirst(const OtherKey &key) const {
+		if (empty()
+			|| compare()(key, front().first)
+			|| compare()(back().first, key)) {
+			return end();
+		}
+		auto where = getLowerBound(key);
+		return compare()(key, where->first) ? impl().end() : where;
+	}
+
 	bool contains(const Key &key) const {
 		return findFirst(key) != end();
 	}
@@ -545,48 +587,54 @@ private:
 		return _data.elements;
 	}
 
-	typename impl_t::iterator getLowerBound(const Key &key) {
+	template <typename OtherKey>
+	typename impl_t::iterator getLowerBound(const OtherKey &key) {
 		return std::lower_bound(
 			std::begin(impl()),
 			std::end(impl()),
 			key,
 			compare());
 	}
-	typename impl_t::const_iterator getLowerBound(const Key &key) const {
+	template <typename OtherKey>
+	typename impl_t::const_iterator getLowerBound(const OtherKey &key) const {
 		return std::lower_bound(
 			std::begin(impl()),
 			std::end(impl()),
 			key,
 			compare());
 	}
-	typename impl_t::iterator getUpperBound(const Key &key) {
+	template <typename OtherKey>
+	typename impl_t::iterator getUpperBound(const OtherKey &key) {
 		return std::upper_bound(
 			std::begin(impl()),
 			std::end(impl()),
 			key,
 			compare());
 	}
-	typename impl_t::const_iterator getUpperBound(const Key &key) const {
+	template <typename OtherKey>
+	typename impl_t::const_iterator getUpperBound(const OtherKey &key) const {
 		return std::upper_bound(
 			std::begin(impl()),
 			std::end(impl()),
 			key,
 			compare());
 	}
+	template <typename OtherKey>
 	std::pair<
 		typename impl_t::iterator,
 		typename impl_t::iterator
-	> getEqualRange(const Key &key) {
+	> getEqualRange(const OtherKey &key) {
 		return std::equal_range(
 			std::begin(impl()),
 			std::end(impl()),
 			key,
 			compare());
 	}
+	template <typename OtherKey>
 	std::pair<
 		typename impl_t::const_iterator,
 		typename impl_t::const_iterator
-	> getEqualRange(const Key &key) const {
+	> getEqualRange(const OtherKey &key) const {
 		return std::equal_range(
 			std::begin(impl()),
 			std::end(impl()),
@@ -613,6 +661,20 @@ public:
 	using const_iterator = typename parent::const_iterator;
 	using reverse_iterator = typename parent::reverse_iterator;
 	using const_reverse_iterator = typename parent::const_reverse_iterator;
+
+	flat_map() = default;
+
+	template <
+		typename Iterator,
+		typename = typename std::iterator_traits<Iterator>::iterator_category
+	>
+	flat_map(Iterator first, Iterator last) : parent(first, last) {
+		finalize();
+	}
+
+	flat_map(std::initializer_list<pair_type> iter) : parent(iter.begin(), iter.end()) {
+		finalize();
+	}
 
 	using parent::parent;
 	using parent::size;
@@ -659,13 +721,55 @@ public:
 		}
 		return { where, false };
 	}
-	template <typename... Args>
-	std::pair<iterator, bool> emplace(
+	std::pair<iterator, bool> insert_or_assign(
 			const Key &key,
+			const Type &value) {
+		if (this->empty() || this->compare()(key, this->front().first)) {
+			this->impl().emplace_front(key, value);
+			return { this->begin(), true };
+		} else if (this->compare()(this->back().first, key)) {
+			this->impl().emplace_back(key, value);
+			return { this->end() - 1, true };
+		}
+		auto where = this->getLowerBound(key);
+		if (this->compare()(key, where->first)) {
+			return { this->impl().insert(where, value_type(key, value)), true };
+		}
+		where->second = value;
+		return { where, false };
+	}
+	std::pair<iterator, bool> insert_or_assign(
+			const Key &key,
+			Type &&value) {
+		if (this->empty() || this->compare()(key, this->front().first)) {
+			this->impl().emplace_front(key, std::move(value));
+			return { this->begin(), true };
+		} else if (this->compare()(this->back().first, key)) {
+			this->impl().emplace_back(key, std::move(value));
+			return { this->end() - 1, true };
+		}
+		auto where = this->getLowerBound(key);
+		if (this->compare()(key, where->first)) {
+			return { this->impl().insert(where, value_type(key, std::move(value))), true };
+		}
+		where->second = std::move(value);
+		return { where, false };
+	}
+	template <typename OtherKey, typename... Args>
+	std::pair<iterator, bool> emplace(
+			OtherKey &&key,
 			Args&&... args) {
 		return this->insert(value_type(
-			key,
+			std::forward<OtherKey>(key),
 			Type(std::forward<Args>(args)...)));
+	}
+	template <typename... Args>
+	std::pair<iterator, bool> emplace_or_assign(
+			const Key &key,
+			Args&&... args) {
+		return this->insert_or_assign(
+			key,
+			Type(std::forward<Args>(args)...));
 	}
 	template <typename... Args>
 	std::pair<iterator, bool> try_emplace(
@@ -706,6 +810,14 @@ public:
 	const_iterator find(const Key &key) const {
 		return this->findFirst(key);
 	}
+	template <typename OtherKey>
+	iterator find(const OtherKey &key) {
+		return this->template findFirst<OtherKey>(key);
+	}
+	template <typename OtherKey>
+	const_iterator find(const OtherKey &key) const {
+		return this->template findFirst<OtherKey>(key);
+	}
 
 	Type &operator[](const Key &key) {
 		if (this->empty() || this->compare()(key, this->front().first)) {
@@ -732,6 +844,74 @@ public:
 		return std::move(result);
 	}
 
+private:
+	void finalize() {
+		this->impl().erase(
+			std::unique(
+				std::begin(this->impl()),
+				std::end(this->impl()),
+				[&](auto &&a, auto &&b) {
+					return !this->compare()(a, b);
+				}
+			),
+			std::end(this->impl()));
+	}
+
 };
+
+} // namespace base
+
+// Structured bindings support.
+namespace std {
+
+template <typename Key, typename Value>
+class tuple_size<base::flat_multi_map_pair_type<Key, Value>>
+: public integral_constant<size_t, 2> {
+};
+
+template <typename Key, typename Value>
+class tuple_element<0, base::flat_multi_map_pair_type<Key, Value>> {
+public:
+	using type = const Key;
+};
+
+template <typename Key, typename Value>
+class tuple_element<1, base::flat_multi_map_pair_type<Key, Value>> {
+public:
+	using type = Value;
+};
+
+} // namespace std
+
+// Structured bindings support.
+namespace base {
+namespace details {
+
+template <std::size_t N, typename Key, typename Value>
+using flat_multi_map_pair_element = std::tuple_element_t<
+	N,
+	flat_multi_map_pair_type<Key, Value>>;
+
+} // namespace details
+
+template <std::size_t N, typename Key, typename Value>
+auto get(base::flat_multi_map_pair_type<Key, Value> &value)
+-> details::flat_multi_map_pair_element<N, Key, Value> & {
+	if constexpr (N == 0) {
+		return value.first;
+	} else {
+		return value.second;
+	}
+}
+
+template <std::size_t N, typename Key, typename Value>
+auto get(const base::flat_multi_map_pair_type<Key, Value> &value)
+-> const details::flat_multi_map_pair_element<N, Key, Value> & {
+	if constexpr (N == 0) {
+		return value.first;
+	} else {
+		return value.second;
+	}
+}
 
 } // namespace base

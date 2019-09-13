@@ -15,13 +15,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/introcode.h"
 #include "intro/introsignup.h"
 #include "intro/intropwdcheck.h"
+#include "main/main_account.h"
 #include "mainwidget.h"
 #include "apiwrap.h"
 #include "mainwindow.h"
-#include "messenger.h"
-#include "application.h"
+#include "core/application.h"
 #include "boxes/confirm_box.h"
 #include "ui/text/text.h"
+#include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
@@ -30,47 +31,44 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_slide_animation.h"
 #include "window/window_connecting_widget.h"
 #include "window/window_lock_widgets.h"
+#include "platform/platform_info.h"
+#include "data/data_user.h"
+#include "window/themes/window_theme.h"
+#include "lang/lang_cloud_manager.h"
+#include "main/main_session.h"
 #include "styles/style_boxes.h"
 #include "styles/style_intro.h"
 #include "styles/style_window.h"
-#include "window/themes/window_theme.h"
-#include "lang/lang_cloud_manager.h"
-#include "auth_session.h"
 
 namespace Intro {
 namespace {
 
-constexpr str_const kDefaultCountry = "US";
-
 void PrepareSupportMode() {
+	using Data::AutoDownload::Full;
+
 	anim::SetDisabled(true);
 	Local::writeSettings();
 
 	Global::SetDesktopNotify(false);
 	Global::SetSoundNotify(false);
-	cSetAutoDownloadAudio(dbiadNoPrivate | dbiadNoGroups);
-	cSetAutoDownloadGif(dbiadNoPrivate | dbiadNoGroups);
-	cSetAutoDownloadPhoto(dbiadNoPrivate | dbiadNoGroups);
-	cSetAutoPlayGif(false);
+	Auth().settings().autoDownload() = Full::FullDisabled();
 	Local::writeUserSettings();
 }
 
 } // namespace
 
-Widget::Widget(QWidget *parent) : RpWidget(parent)
+Widget::Widget(QWidget *parent, not_null<Main::Account*> account)
+: RpWidget(parent)
+, _account(account)
 , _back(this, object_ptr<Ui::IconButton>(this, st::introBackButton))
 , _settings(
 	this,
 	object_ptr<Ui::RoundButton>(
 		this,
-		langFactory(lng_menu_settings),
+		tr::lng_menu_settings(),
 		st::defaultBoxButton))
-, _next(this, Fn<QString()>(), st::introNextButton) {
-	auto country = Platform::SystemCountry();
-	if (country.isEmpty()) {
-		country = str_const_toString(kDefaultCountry);
-	}
-	getData()->country = country;
+, _next(this, nullptr, st::introNextButton) {
+	getData()->country = Platform::SystemCountry();
 
 	_back->entity()->setClickedCallback([this] { historyMove(Direction::Back); });
 	_back->hide(anim::type::instant);
@@ -82,7 +80,7 @@ Widget::Widget(QWidget *parent) : RpWidget(parent)
 	getNearestDC();
 	setupConnectingWidget();
 
-	appendStep(new StartWidget(this, getData()));
+	appendStep(new StartWidget(this, _account, getData()));
 	fixOrder();
 
 	subscribe(Lang::CurrentCloudManager().firstLanguageSuggestion(), [this] { createLanguageLink(); });
@@ -94,6 +92,7 @@ Widget::Widget(QWidget *parent) : RpWidget(parent)
 	show();
 	showControls();
 	getStep()->showFast();
+	setInnerFocus();
 
 	cSetPasswordRecovered(false);
 
@@ -114,7 +113,7 @@ Widget::Widget(QWidget *parent) : RpWidget(parent)
 }
 
 void Widget::setupConnectingWidget() {
-	_connecting = Window::ConnectingWidget::CreateDefaultWidget(
+	_connecting = std::make_unique<Window::ConnectionState>(
 		this,
 		rpl::single(true));
 }
@@ -142,21 +141,23 @@ void Widget::createLanguageLink() {
 		updateControlsGeometry();
 	};
 
-	auto currentId = Lang::Current().id();
-	auto defaultId = Lang::DefaultLanguageId();
-	auto suggestedId = Lang::CurrentCloudManager().suggestedLanguage();
-	if (!currentId.isEmpty() && currentId != defaultId) {
-		createLink(Lang::GetOriginalValue(lng_switch_to_this), defaultId);
-	} else if (!suggestedId.isEmpty() && suggestedId != currentId) {
+	const auto currentId = Lang::LanguageIdOrDefault(Lang::Current().id());
+	const auto defaultId = Lang::DefaultLanguageId();
+	const auto suggested = Lang::CurrentCloudManager().suggestedLanguage();
+	if (currentId != defaultId) {
+		createLink(
+			Lang::GetOriginalValue(tr::lng_switch_to_this.base),
+			defaultId);
+	} else if (!suggested.isEmpty() && suggested != currentId) {
 		request(MTPlangpack_GetStrings(
 			MTP_string(Lang::CloudLangPackName()),
-			MTP_string(suggestedId),
+			MTP_string(suggested),
 			MTP_vector<MTPstring>(1, MTP_string("lng_switch_to_this"))
 		)).done([=](const MTPVector<MTPLangPackString> &result) {
-			auto strings = Lang::Instance::ParseStrings(result);
-			auto it = strings.find(lng_switch_to_this);
-			if (it != strings.end()) {
-				createLink(it->second, suggestedId);
+			const auto strings = Lang::Instance::ParseStrings(result);
+			const auto i = strings.find(tr::lng_switch_to_this.base);
+			if (i != strings.end()) {
+				createLink(i->second, suggested);
 			}
 		}).send();
 	}
@@ -171,7 +172,7 @@ void Widget::onCheckUpdateStatus() {
 			this,
 			object_ptr<Ui::RoundButton>(
 				this,
-				langFactory(lng_menu_update),
+				tr::lng_menu_update(),
 				st::defaultBoxButton));
 		if (!_a_show.animating()) {
 			_update->setVisible(true);
@@ -238,7 +239,7 @@ void Widget::historyMove(Direction direction) {
 	if (_update) {
 		_update->toggle(!stepHasCover, anim::type::normal);
 	}
-	_next->setText([this] { return getStep()->nextButtonText(); });
+	_next->setText(getStep()->nextButtonText());
 	if (_resetAccount) _resetAccount->show(anim::type::normal);
 	if (_terms) _terms->show(anim::type::normal);
 	if (_changeLanguage) {
@@ -304,7 +305,10 @@ void Widget::appendStep(Step *step) {
 
 void Widget::showResetButton() {
 	if (!_resetAccount) {
-		auto entity = object_ptr<Ui::RoundButton>(this, langFactory(lng_signin_reset_account), st::introResetButton);
+		auto entity = object_ptr<Ui::RoundButton>(
+			this,
+			tr::lng_signin_reset_account(),
+			st::introResetButton);
 		_resetAccount.create(this, std::move(entity));
 		_resetAccount->hide(anim::type::instant);
 		_resetAccount->entity()->setClickedCallback([this] { resetAccount(); });
@@ -322,17 +326,20 @@ void Widget::showTerms() {
 	} else if (!_terms) {
 		auto entity = object_ptr<Ui::FlatLabel>(
 			this,
-			lng_terms_signup(
+			tr::lng_terms_signup(
 				lt_link,
-				textcmdLink(1, lang(lng_terms_signup_link))),
-			Ui::FlatLabel::InitType::Rich,
+				tr::lng_terms_signup_link() | Ui::Text::ToLink(),
+				Ui::Text::WithEntities),
 			st::introTermsLabel);
 		_terms.create(this, std::move(entity));
-		_terms->entity()->setLink(
-			1,
-			std::make_shared<LambdaClickHandler>([=] {
+		_terms->entity()->setClickHandlerFilter([=](
+				const ClickHandlerPtr &handler,
+				Qt::MouseButton button) {
+			if (button == Qt::LeftButton) {
 				showTerms(nullptr);
-			}));
+			}
+			return false;
+		});
 		updateControlsGeometry();
 		_terms->hide(anim::type::instant);
 	}
@@ -350,37 +357,69 @@ void Widget::acceptTerms(Fn<void()> callback) {
 void Widget::resetAccount() {
 	if (_resetRequest) return;
 
-	Ui::show(Box<ConfirmBox>(lang(lng_signin_sure_reset), lang(lng_signin_reset), st::attentionBoxButton, crl::guard(this, [this] {
+	Ui::show(Box<ConfirmBox>(tr::lng_signin_sure_reset(tr::now), tr::lng_signin_reset(tr::now), st::attentionBoxButton, crl::guard(this, [this] {
 		if (_resetRequest) return;
 		_resetRequest = request(MTPaccount_DeleteAccount(MTP_string("Forgot password"))).done([this](const MTPBool &result) {
 			_resetRequest = 0;
 
 			Ui::hideLayer();
-			moveToStep(new SignupWidget(this, getData()), Direction::Replace);
+			moveToStep(
+				new SignupWidget(this, _account, getData()),
+				Direction::Replace);
 		}).fail([this](const RPCError &error) {
 			_resetRequest = 0;
 
-			auto type = error.type();
+			const auto &type = error.type();
 			if (type.startsWith(qstr("2FA_CONFIRM_WAIT_"))) {
-				auto seconds = type.mid(qstr("2FA_CONFIRM_WAIT_").size()).toInt();
-				auto days = (seconds + 59) / 86400;
-				auto hours = ((seconds + 59) % 86400) / 3600;
-				auto minutes = ((seconds + 59) % 3600) / 60;
-				auto when = lng_signin_reset_minutes(lt_count, minutes);
+				const auto seconds = type.mid(qstr("2FA_CONFIRM_WAIT_").size()).toInt();
+				const auto days = (seconds + 59) / 86400;
+				const auto hours = ((seconds + 59) % 86400) / 3600;
+				const auto minutes = ((seconds + 59) % 3600) / 60;
+				auto when = tr::lng_signin_reset_minutes(
+					tr::now,
+					lt_count,
+					minutes);
 				if (days > 0) {
-					auto daysCount = lng_signin_reset_days(lt_count, days);
-					auto hoursCount = lng_signin_reset_hours(lt_count, hours);
-					when = lng_signin_reset_in_days(lt_days_count, daysCount, lt_hours_count, hoursCount, lt_minutes_count, when);
+					const auto daysCount = tr::lng_signin_reset_days(
+						tr::now,
+						lt_count,
+						days);
+					const auto hoursCount = tr::lng_signin_reset_hours(
+						tr::now,
+						lt_count,
+						hours);
+					when = tr::lng_signin_reset_in_days(
+						tr::now,
+						lt_days_count,
+						daysCount,
+						lt_hours_count,
+						hoursCount,
+						lt_minutes_count,
+						when);
 				} else if (hours > 0) {
-					auto hoursCount = lng_signin_reset_hours(lt_count, hours);
-					when = lng_signin_reset_in_hours(lt_hours_count, hoursCount, lt_minutes_count, when);
+					const auto hoursCount = tr::lng_signin_reset_hours(
+						tr::now,
+						lt_count,
+						hours);
+					when = tr::lng_signin_reset_in_hours(
+						tr::now,
+						lt_hours_count,
+						hoursCount,
+						lt_minutes_count,
+						when);
 				}
-				Ui::show(Box<InformBox>(lng_signin_reset_wait(lt_phone_number, App::formatPhone(getData()->phone), lt_when, when)));
+				Ui::show(Box<InformBox>(tr::lng_signin_reset_wait(
+					tr::now,
+					lt_phone_number,
+					App::formatPhone(getData()->phone),
+					lt_when,
+					when)));
 			} else if (type == qstr("2FA_RECENT_CONFIRM")) {
-				Ui::show(Box<InformBox>(lang(lng_signin_reset_cancelled)));
+				Ui::show(Box<InformBox>(
+					tr::lng_signin_reset_cancelled(tr::now)));
 			} else {
 				Ui::hideLayer();
-				getStep()->showError(&Lang::Hard::ServerError);
+				getStep()->showError(rpl::single(Lang::Hard::ServerError()));
 			}
 		}).send();
 	})));
@@ -390,11 +429,11 @@ void Widget::getNearestDC() {
 	request(MTPhelp_GetNearestDc()).done([this](const MTPNearestDc &result) {
 		auto &nearest = result.c_nearestDc();
 		DEBUG_LOG(("Got nearest dc, country: %1, nearest: %2, this: %3"
-			).arg(qs(nearest.vcountry)
-			).arg(nearest.vnearest_dc.v
-			).arg(nearest.vthis_dc.v));
-		Messenger::Instance().suggestMainDcId(nearest.vnearest_dc.v);
-		auto nearestCountry = qs(nearest.vcountry);
+			).arg(qs(nearest.vcountry())
+			).arg(nearest.vnearest_dc().v
+			).arg(nearest.vthis_dc().v));
+		_account->suggestMainDcId(nearest.vnearest_dc().v);
+		const auto nearestCountry = qs(nearest.vcountry());
 		if (getData()->country != nearestCountry) {
 			getData()->country = nearestCountry;
 			getData()->updated.notify();
@@ -410,11 +449,11 @@ void Widget::showTerms(Fn<void()> callback) {
 	const auto box = Ui::show(callback
 		? Box<Window::TermsBox>(
 			getData()->termsLock,
-			langFactory(lng_terms_agree),
-			langFactory(lng_terms_decline))
+			tr::lng_terms_agree(),
+			tr::lng_terms_decline())
 		: Box<Window::TermsBox>(
 			getData()->termsLock.text,
-			langFactory(lng_box_ok),
+			tr::lng_box_ok(),
 			nullptr));
 
 	box->setCloseByEscape(false);
@@ -433,9 +472,9 @@ void Widget::showTerms(Fn<void()> callback) {
 	box->cancelClicks(
 	) | rpl::start_with_next([=] {
 		const auto box = Ui::show(Box<Window::TermsBox>(
-			TextWithEntities{ lang(lng_terms_signup_sorry) },
-			langFactory(lng_intro_finish),
-			langFactory(lng_terms_decline)));
+			TextWithEntities{ tr::lng_terms_signup_sorry(tr::now) },
+			tr::lng_intro_finish(),
+			tr::lng_terms_decline()));
 		box->agreeClicks(
 		) | rpl::start_with_next([=] {
 			if (weak) {
@@ -454,7 +493,7 @@ void Widget::showTerms(Fn<void()> callback) {
 void Widget::showControls() {
 	getStep()->show();
 	_next->show();
-	_next->setText([this] { return getStep()->nextButtonText(); });
+	_next->setText(getStep()->nextButtonText());
 	_connecting->setForceHidden(false);
 	auto hasCover = getStep()->hasCover();
 	_settings->toggle(!hasCover, anim::type::instant);
@@ -488,12 +527,12 @@ void Widget::showAnimated(const QPixmap &bgAnimCache, bool back) {
 
 	(_showBack ? _cacheOver : _cacheUnder) = bgAnimCache;
 
-	_a_show.finish();
+	_a_show.stop();
 	showControls();
 	(_showBack ? _cacheUnder : _cacheOver) = Ui::GrabWidget(this);
 	hideControls();
 
-	_a_show.start([this] { animationCallback(); }, 0., 1., st::slideDuration, Window::SlideAnimation::transition());
+	_a_show.start([=] { animationCallback(); }, 0., 1., st::slideDuration, Window::SlideAnimation::transition());
 
 	show();
 }
@@ -512,16 +551,12 @@ void Widget::paintEvent(QPaintEvent *e) {
 	bool trivial = (rect() == e->rect());
 	setMouseTracking(true);
 
-	if (_coverShownAnimation.animating()) {
-		_coverShownAnimation.step(getms());
-	}
-
 	QPainter p(this);
 	if (!trivial) {
 		p.setClipRect(e->rect());
 	}
 	p.fillRect(e->rect(), st::windowBg);
-	auto progress = _a_show.current(getms(), 1.);
+	auto progress = _a_show.value(1.);
 	if (_a_show.animating()) {
 		auto coordUnder = _showBack ? anim::interpolate(-st::slideShift, 0, progress) : anim::interpolate(0, -st::slideShift, progress);
 		auto coordOver = _showBack ? anim::interpolate(0, width(), progress) : anim::interpolate(width(), 0, progress);
@@ -558,7 +593,7 @@ void Widget::resizeEvent(QResizeEvent *e) {
 }
 
 void Widget::updateControlsGeometry() {
-	auto shown = _coverShownAnimation.current(1.);
+	auto shown = _coverShownAnimation.value(1.);
 
 	auto controlsTopTo = getStep()->hasCover() ? st::introCoverHeight : 0;
 	auto controlsTop = anim::interpolate(_controlsTopFrom, controlsTopTo, shown);
@@ -604,14 +639,14 @@ Widget::~Widget() {
 	if (App::wnd()) App::wnd()->noIntro(this);
 }
 
-QString Widget::Step::nextButtonText() const {
-	return lang(lng_intro_next);
+rpl::producer<QString> Widget::Step::nextButtonText() const {
+	return tr::lng_intro_next();
 }
 
 void Widget::Step::finish(const MTPUser &user, QImage &&photo) {
 	if (user.type() != mtpc_user
 		|| !user.c_user().is_self()
-		|| !user.c_user().vid.v) {
+		|| !user.c_user().vid().v) {
 		// No idea what to do here.
 		// We could've reset intro and MTP, but this really should not happen.
 		Ui::show(Box<InformBox>("Internal error: bad user.is_self() after sign in."));
@@ -619,24 +654,27 @@ void Widget::Step::finish(const MTPUser &user, QImage &&photo) {
 	}
 
 	// Save the default language if we've suggested some other and user ignored it.
-	auto currentId = Lang::Current().id();
-	auto defaultId = Lang::DefaultLanguageId();
-	auto suggestedId = Lang::CurrentCloudManager().suggestedLanguage();
-	if (currentId.isEmpty() && !suggestedId.isEmpty() && suggestedId != defaultId) {
-		Lang::Current().switchToId(defaultId);
+	const auto currentId = Lang::Current().id();
+	const auto defaultId = Lang::DefaultLanguageId();
+	const auto suggested = Lang::CurrentCloudManager().suggestedLanguage();
+	if (currentId.isEmpty() && !suggested.isEmpty() && suggested != defaultId) {
+		Lang::Current().switchToId(Lang::DefaultLanguage());
 		Local::writeLangPack();
 	}
 
-	Messenger::Instance().authSessionCreate(user);
+	const auto account = _account;
+	const auto weak = base::make_weak(account.get());
+	account->createSession(user);
 	Local::writeMtpData();
 	App::wnd()->setupMain();
 
 	// "this" is already deleted here by creating the main widget.
-	if (AuthSession::Exists()) {
+	if (weak && account->sessionExists()) {
+		auto &session = account->session();
 		if (!photo.isNull()) {
-			Auth().api().uploadPeerPhoto(Auth().user(), std::move(photo));
+			session.api().uploadPeerPhoto(session.user(), std::move(photo));
 		}
-		if (Auth().supportMode()) {
+		if (session.supportMode()) {
 			PrepareSupportMode();
 		}
 	}
@@ -658,6 +696,7 @@ void Widget::Step::updateLabelsPosition() {
 		_description->moveToLeft((width() - _description->width()) / 2, contentTop() + st::introCoverDescriptionTop);
 	} else {
 		_title->moveToLeft(contentLeft() + st::buttonRadius, contentTop() + st::introTitleTop);
+		_description->resizeToWidth(st::introDescription.minWidth);
 		_description->moveToLeft(contentLeft() + st::buttonRadius, contentTop() + st::introDescriptionTop);
 	}
 	if (_error) {
@@ -671,35 +710,23 @@ void Widget::Step::updateLabelsPosition() {
 	}
 }
 
-void Widget::Step::setTitleText(Fn<QString()> richTitleTextFactory) {
-	_titleTextFactory = std::move(richTitleTextFactory);
-	refreshTitle();
-	updateLabelsPosition();
+void Widget::Step::setTitleText(rpl::producer<QString> titleText) {
+	_titleText = std::move(titleText);
 }
 
-void Widget::Step::refreshTitle() {
-	_title->setRichText(_titleTextFactory());
+void Widget::Step::setDescriptionText(
+		rpl::producer<QString> descriptionText) {
+	setDescriptionText(
+		std::move(descriptionText) | Ui::Text::ToWithEntities());
 }
 
-void Widget::Step::setDescriptionText(Fn<QString()> richDescriptionTextFactory) {
-	_descriptionTextFactory = std::move(richDescriptionTextFactory);
-	refreshDescription();
-	updateLabelsPosition();
-}
-
-void Widget::Step::refreshDescription() {
-	_description->entity()->setRichText(_descriptionTextFactory());
-}
-
-void Widget::Step::refreshLang() {
-	refreshTitle();
-	refreshDescription();
-	refreshError();
-	updateLabelsPosition();
+void Widget::Step::setDescriptionText(
+		rpl::producer<TextWithEntities> richDescriptionText) {
+	_descriptionText = std::move(richDescriptionText);
 }
 
 void Widget::Step::showFinished() {
-	_a_show.finish();
+	_a_show.stop();
 	_coverAnimation = CoverAnimation();
 	_slideAnimation.reset();
 	prepareCoverMask();
@@ -708,7 +735,7 @@ void Widget::Step::showFinished() {
 
 bool Widget::Step::paintAnimated(Painter &p, QRect clip) {
 	if (_slideAnimation) {
-		_slideAnimation->paintFrame(p, (width() - st::introStepWidth) / 2, contentTop(), width(), getms());
+		_slideAnimation->paintFrame(p, (width() - st::introStepWidth) / 2, contentTop(), width());
 		if (!_slideAnimation->animating()) {
 			showFinished();
 			return false;
@@ -716,7 +743,7 @@ bool Widget::Step::paintAnimated(Painter &p, QRect clip) {
 		return true;
 	}
 
-	auto dt = _a_show.current(getms(), 1.);
+	auto dt = _a_show.value(1.);
 	if (!_a_show.animating()) {
 		if (hasCover()) {
 			paintCover(p, 0);
@@ -750,26 +777,19 @@ bool Widget::Step::paintAnimated(Painter &p, QRect clip) {
 }
 
 void Widget::Step::fillSentCodeData(const MTPDauth_sentCode &data) {
-	if (data.has_terms_of_service()) {
-		const auto &terms = data.vterms_of_service.c_help_termsOfService();
-		getData()->termsLock = Window::TermsLock::FromMTP(terms);
-	} else {
-		getData()->termsLock = Window::TermsLock();
-	}
-
-	const auto &type = data.vtype;
+	const auto &type = data.vtype();
 	switch (type.type()) {
 	case mtpc_auth_sentCodeTypeApp: {
 		getData()->codeByTelegram = true;
-		getData()->codeLength = type.c_auth_sentCodeTypeApp().vlength.v;
+		getData()->codeLength = type.c_auth_sentCodeTypeApp().vlength().v;
 	} break;
 	case mtpc_auth_sentCodeTypeSms: {
 		getData()->codeByTelegram = false;
-		getData()->codeLength = type.c_auth_sentCodeTypeSms().vlength.v;
+		getData()->codeLength = type.c_auth_sentCodeTypeSms().vlength().v;
 	} break;
 	case mtpc_auth_sentCodeTypeCall: {
 		getData()->codeByTelegram = false;
-		getData()->codeLength = type.c_auth_sentCodeTypeCall().vlength.v;
+		getData()->codeLength = type.c_auth_sentCodeTypeCall().vlength().v;
 	} break;
 	case mtpc_auth_sentCodeTypeFlashCall: LOG(("Error: should not be flashcall!")); break;
 	}
@@ -876,14 +896,12 @@ void Widget::Step::setErrorBelowLink(bool below) {
 	}
 }
 
-void Widget::Step::showError(Fn<QString()> textFactory) {
-	_errorTextFactory = std::move(textFactory);
-	refreshError();
-	updateLabelsPosition();
+void Widget::Step::showError(rpl::producer<QString> text) {
+	_errorText = std::move(text);
 }
 
-void Widget::Step::refreshError() {
-	if (!_errorTextFactory) {
+void Widget::Step::refreshError(const QString &text) {
+	if (text.isEmpty()) {
 		if (_error) _error->hide(anim::type::normal);
 	} else {
 		if (!_error) {
@@ -896,13 +914,19 @@ void Widget::Step::refreshError() {
 						: st::introError));
 			_error->hide(anim::type::instant);
 		}
-		_error->entity()->setText(_errorTextFactory());
+		_error->entity()->setText(text);
 		updateLabelsPosition();
 		_error->show(anim::type::normal);
 	}
 }
 
-Widget::Step::Step(QWidget *parent, Data *data, bool hasCover) : TWidget(parent)
+Widget::Step::Step(
+	QWidget *parent,
+	not_null<Main::Account*> account,
+	not_null<Data*> data,
+	bool hasCover)
+: RpWidget(parent)
+, _account(account)
 , _data(data)
 , _hasCover(hasCover)
 , _title(this, _hasCover ? st::introCoverTitle : st::introTitle)
@@ -923,7 +947,23 @@ Widget::Step::Step(QWidget *parent, Data *data, bool hasCover) : TWidget(parent)
 			}
 		}
 	});
-	subscribe(Lang::Current().updated(), [this] { refreshLang(); });
+
+	_errorText.value(
+	) | rpl::start_with_next([=](const QString &text) {
+		refreshError(text);
+	}, lifetime());
+
+	_titleText.value(
+	) | rpl::start_with_next([=](const QString &text) {
+		_title->setText(text);
+		updateLabelsPosition();
+	}, lifetime());
+
+	_descriptionText.value(
+	) | rpl::start_with_next([=](const TextWithEntities &text) {
+		_description->entity()->setMarkedText(text);
+		updateLabelsPosition();
+	}, lifetime());
 }
 
 void Widget::Step::prepareShowAnimated(Step *after) {
@@ -1020,7 +1060,7 @@ bool Widget::Step::hasBack() const {
 void Widget::Step::activate() {
 	_title->show();
 	_description->show(anim::type::instant);
-	if (_errorTextFactory) {
+	if (!_errorText.current().isEmpty()) {
 		_error->show(anim::type::instant);
 	}
 }

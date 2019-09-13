@@ -13,16 +13,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_document.h"
 #include "data/data_media_types.h"
 #include "data/data_session.h"
+#include "data/data_web_page.h"
+#include "data/data_file_origin.h"
 #include "history/history.h"
-#include "history/history_media.h"
-#include "auth_session.h"
+#include "history/view/media/history_view_media.h"
+#include "ui/image/image.h"
+#include "main/main_session.h"
 #include "styles/style_mediaview.h"
 
 namespace Media {
 namespace View {
 namespace {
 
-constexpr auto kThumbDuration = TimeMs(150);
+constexpr auto kThumbDuration = crl::time(150);
 
 int Round(float64 value) {
 	return int(std::round(value));
@@ -37,11 +40,17 @@ Data::FileOrigin ComputeFileOrigin(const Key &key, const Context &context) {
 			return peerIsUser(peerId)
 				? Data::FileOriginUserPhoto(peerToUser(peerId), photoId)
 				: Data::FileOrigin(Data::FileOriginPeerPhoto(peerId));
-		}, [&](auto&&) {
+		}, [](auto&&) {
 			return Data::FileOrigin();
 		});
 	}, [](FullMsgId itemId) {
 		return Data::FileOrigin(itemId);
+	}, [&](GroupThumbs::CollageKey) {
+		return context.match([](const GroupThumbs::CollageSlice &slice) {
+			return Data::FileOrigin(slice.context);
+		}, [](auto&&) {
+			return Data::FileOrigin();
+		});
 	});
 }
 
@@ -55,7 +64,7 @@ Context ComputeContext(const SharedMediaWithLastSlice &slice, int index) {
 		}
 		return std::nullopt;
 	} else if (const auto msgId = base::get_if<FullMsgId>(&value)) {
-		if (const auto item = App::histItemById(*msgId)) {
+		if (const auto item = Auth().data().message(*msgId)) {
 			if (!item->toHistoryMessage()) {
 				return item->history()->peer->id;
 			} else if (const auto groupId = item->groupId()) {
@@ -69,6 +78,10 @@ Context ComputeContext(const SharedMediaWithLastSlice &slice, int index) {
 
 Context ComputeContext(const UserPhotosSlice &slice, int index) {
 	return peerFromUser(slice.key().userId);
+}
+
+Context ComputeContext(const GroupThumbs::CollageSlice &slice, int index) {
+	return slice.context;
 }
 
 Key ComputeKey(const SharedMediaWithLastSlice &slice, int index) {
@@ -85,6 +98,10 @@ Key ComputeKey(const SharedMediaWithLastSlice &slice, int index) {
 
 Key ComputeKey(const UserPhotosSlice &slice, int index) {
 	return slice[index];
+}
+
+Key ComputeKey(const GroupThumbs::CollageSlice &slice, int index) {
+	return GroupThumbs::CollageKey{ index };
 }
 
 int ComputeThumbsLimit(int availableWidth) {
@@ -112,7 +129,7 @@ public:
 
 	Thumb(
 		Key key,
-		ImagePtr image,
+		Image *image,
 		Data::FileOrigin origin,
 		Fn<void()> handler);
 
@@ -140,7 +157,7 @@ private:
 
 	ClickHandlerPtr _link;
 	const Key _key;
-	ImagePtr _image;
+	Image *_image = nullptr;
 	Data::FileOrigin _origin;
 	State _state = State::Alive;
 	QPixmap _full;
@@ -155,7 +172,7 @@ private:
 
 GroupThumbs::Thumb::Thumb(
 	Key key,
-	ImagePtr image,
+	Image *image,
 	Data::FileOrigin origin,
 	Fn<void()> handler)
 : _key(key)
@@ -169,15 +186,15 @@ GroupThumbs::Thumb::Thumb(
 }
 
 QSize GroupThumbs::Thumb::wantedPixSize() const {
-	const auto originalWidth = std::max(_image->width(), 1);
-	const auto originalHeight = std::max(_image->height(), 1);
+	const auto originalWidth = _image ? std::max(_image->width(), 1) : 1;
+	const auto originalHeight = _image ? std::max(_image->height(), 1) : 1;
 	const auto pixHeight = st::mediaviewGroupHeight;
 	const auto pixWidth = originalWidth * pixHeight / originalHeight;
 	return { pixWidth, pixHeight };
 }
 
 void GroupThumbs::Thumb::validateImage() {
-	if (!_full.isNull()) {
+	if (!_full.isNull() || !_image) {
 		return;
 	}
 	_image->load(_origin);
@@ -350,6 +367,10 @@ ClickHandlerPtr GroupThumbs::Thumb::getState(QPoint point) const {
 		: nullptr;
 }
 
+int GroupThumbs::CollageSlice::size() const {
+	return data->items.size();
+}
+
 GroupThumbs::GroupThumbs(Context context)
 : _context(context) {
 }
@@ -495,25 +516,54 @@ auto GroupThumbs::createThumb(Key key)
 -> std::unique_ptr<Thumb> {
 	if (const auto photoId = base::get_if<PhotoId>(&key)) {
 		const auto photo = Auth().data().photo(*photoId);
-		return createThumb(
-			key,
-			photo->date ? photo->thumb : ImagePtr());
+		return createThumb(key, photo->thumbnail());
 	} else if (const auto msgId = base::get_if<FullMsgId>(&key)) {
-		if (const auto item = App::histItemById(*msgId)) {
+		if (const auto item = Auth().data().message(*msgId)) {
 			if (const auto media = item->media()) {
 				if (const auto photo = media->photo()) {
-					return createThumb(key, photo->thumb);
+					return createThumb(key, photo->thumbnail());
 				} else if (const auto document = media->document()) {
-					return createThumb(key, document->thumb);
+					return createThumb(key, document->thumbnail());
 				}
 			}
 		}
-		return createThumb(key, ImagePtr());
+		return createThumb(key, nullptr);
+	} else if (const auto collageKey = base::get_if<CollageKey>(&key)) {
+		if (const auto itemId = base::get_if<FullMsgId>(&_context)) {
+			if (const auto item = Auth().data().message(*itemId)) {
+				if (const auto media = item->media()) {
+					if (const auto page = media->webpage()) {
+						return createThumb(
+							key,
+							page->collage,
+							collageKey->index);
+					}
+				}
+			}
+		}
+		return createThumb(key, nullptr);
 	}
 	Unexpected("Value of Key in GroupThumbs::createThumb()");
 }
 
-auto GroupThumbs::createThumb(Key key, ImagePtr image)
+auto GroupThumbs::createThumb(
+	Key key,
+	const WebPageCollage &collage,
+	int index)
+-> std::unique_ptr<Thumb> {
+	if (index < 0 || index >= collage.items.size()) {
+		return createThumb(key, nullptr);
+	}
+	const auto &item = collage.items[index];
+	if (const auto photo = base::get_if<PhotoData*>(&item)) {
+		return createThumb(key, (*photo)->thumbnail());
+	} else if (const auto document = base::get_if<DocumentData*>(&item)) {
+		return createThumb(key, (*document)->thumbnail());
+	}
+	return createThumb(key, nullptr);
+}
+
+auto GroupThumbs::createThumb(Key key, Image *image)
 -> std::unique_ptr<Thumb> {
 	const auto weak = base::make_weak(this);
 	const auto origin = ComputeFileOrigin(key, _context);
@@ -555,6 +605,14 @@ void GroupThumbs::Refresh(
 	RefreshFromSlice(instance, slice, index, availableWidth);
 }
 
+void GroupThumbs::Refresh(
+		std::unique_ptr<GroupThumbs> &instance,
+		const CollageSlice &slice,
+		int index,
+		int availableWidth) {
+	RefreshFromSlice(instance, slice, index, availableWidth);
+}
+
 void GroupThumbs::clear() {
 	if (_items.empty()) {
 		return;
@@ -566,7 +624,7 @@ void GroupThumbs::clear() {
 }
 
 void GroupThumbs::startDelayedAnimation() {
-	_animation.finish();
+	_animation.stop();
 	_waitingForAnimationStart = true;
 	countUpdatedRect();
 }
@@ -592,7 +650,7 @@ bool GroupThumbs::hidden() const {
 void GroupThumbs::checkForAnimationStart() {
 	if (_waitingForAnimationStart) {
 		_waitingForAnimationStart = false;
-		_animation.start([this] { update(); }, 0., 1., kThumbDuration);
+		_animation.start([=] { update(); }, 0., 1., kThumbDuration);
 	}
 }
 
@@ -603,15 +661,10 @@ void GroupThumbs::update() {
 	_updateRequests.fire_copy(_updatedRect);
 }
 
-void GroupThumbs::paint(
-		Painter &p,
-		int x,
-		int y,
-		int outerWidth,
-		TimeMs ms) {
+void GroupThumbs::paint(Painter &p, int x, int y, int outerWidth) {
 	const auto progress = _waitingForAnimationStart
 		? 0.
-		: _animation.current(ms, 1.);
+		: _animation.value(1.);
 	x += (_width / 2);
 	y += st::mediaviewGroupPadding.top();
 	for (auto i = _cache.begin(); i != _cache.end();) {

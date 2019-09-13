@@ -9,8 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Support {
 
-bool ValidateAccount(const MTPUser &self);
-
 enum class SwitchSettings {
 	None,
 	Next,
@@ -19,6 +17,6 @@ enum class SwitchSettings {
 
 Qt::KeyboardModifiers SkipSwitchModifiers();
 bool HandleSwitch(Qt::KeyboardModifiers modifiers);
-void PerformSwitch(SwitchSettings value);
+FnMut<bool()> GetSwitchMethod(SwitchSettings value);
 
 } // namespace Support

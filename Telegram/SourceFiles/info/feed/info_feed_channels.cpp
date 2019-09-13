@@ -95,10 +95,11 @@ void Channels::setupHeader() {
 		parent,
 		rpl::single(QString()));
 
-	object_ptr<Profile::FloatingIcon>(
-		parent,
-		st::infoIconFeed,
-		st::infoIconPosition);
+	// #feed
+	//object_ptr<Profile::FloatingIcon>(
+	//	parent,
+	//	st::infoIconFeed,
+	//	st::infoIconPosition);
 
 	_titleWrap = Ui::CreateChild<Ui::RpWidget>(parent);
 	_title = setupTitle();
@@ -217,7 +218,7 @@ void Channels::updateHeaderControlsGeometry(int newWidth) {
 	//auto searchShownLeft = st::infoIconPosition.x()
 	//	- st::infoMembersSearch.iconPosition.x();
 	//auto searchHiddenLeft = availableWidth - _search->width();
-	//auto searchShown = _searchShownAnimation.current(_searchShown ? 1. : 0.);
+	//auto searchShown = _searchShownAnimation.value(_searchShown ? 1. : 0.);
 	//auto searchCurrentLeft = anim::interpolate(
 	//	searchHiddenLeft,
 	//	searchShownLeft,

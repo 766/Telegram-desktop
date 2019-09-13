@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/variant.h"
+#include "api/api_common.h"
 
 enum class CompressConfirm {
 	Auto,
@@ -20,6 +21,7 @@ enum class SendMediaType {
 	Photo,
 	Audio,
 	File,
+	ThemeFile,
 	Secure,
 };
 
@@ -47,29 +49,22 @@ using SendMediaPrepareList = QList<SendMediaPrepare>;
 using UploadFileParts =  QMap<int, QByteArray>;
 struct SendMediaReady {
 	SendMediaReady() = default; // temp
-	SendMediaReady(SendMediaType type, const QString &file, const QString &filename, int32 filesize, const QByteArray &data, const uint64 &id, const uint64 &thumbId, const QString &thumbExt, const PeerId &peer, const MTPPhoto &photo, const PreparedPhotoThumbs &photoThumbs, const MTPDocument &document, const QByteArray &jpeg, MsgId replyTo)
-		: replyTo(replyTo)
-		, type(type)
-		, file(file)
-		, filename(filename)
-		, filesize(filesize)
-		, data(data)
-		, thumbExt(thumbExt)
-		, id(id)
-		, thumbId(thumbId)
-		, peer(peer)
-		, photo(photo)
-		, document(document)
-		, photoThumbs(photoThumbs) {
-		if (!jpeg.isEmpty()) {
-			int32 size = jpeg.size();
-			for (int32 i = 0, part = 0; i < size; i += UploadPartSize, ++part) {
-				parts.insert(part, jpeg.mid(i, UploadPartSize));
-			}
-			jpeg_md5.resize(32);
-			hashMd5Hex(jpeg.constData(), jpeg.size(), jpeg_md5.data());
-		}
-	}
+	SendMediaReady(
+		SendMediaType type,
+		const QString &file,
+		const QString &filename,
+		int32 filesize,
+		const QByteArray &data,
+		const uint64 &id,
+		const uint64 &thumbId,
+		const QString &thumbExt,
+		const PeerId &peer,
+		const MTPPhoto &photo,
+		const PreparedPhotoThumbs &photoThumbs,
+		const MTPDocument &document,
+		const QByteArray &jpeg,
+		MsgId replyTo);
+
 	MsgId replyTo;
 	SendMediaType type;
 	QString file, filename;
@@ -110,7 +105,7 @@ class TaskQueue : public QObject {
 	Q_OBJECT
 
 public:
-	explicit TaskQueue(TimeMs stopTimeoutMs = 0); // <= 0 - never stop worker
+	explicit TaskQueue(crl::time stopTimeoutMs = 0); // <= 0 - never stop worker
 
 	TaskId addTask(std::unique_ptr<Task> &&task);
 	void addTasks(std::vector<std::unique_ptr<Task>> &&tasks);
@@ -163,27 +158,36 @@ struct SendingAlbum {
 	struct Item {
 		explicit Item(TaskId taskId) : taskId(taskId) {
 		}
+
 		TaskId taskId;
+		uint64 randomId = 0;
 		FullMsgId msgId;
 		std::optional<MTPInputSingleMedia> media;
 	};
 
 	SendingAlbum();
 
+	void fillMedia(
+		not_null<HistoryItem*> item,
+		const MTPInputMedia &media,
+		uint64 randomId);
+	void refreshMediaCaption(not_null<HistoryItem*> item);
+	void removeItem(not_null<HistoryItem*> item);
+
 	uint64 groupId = 0;
 	std::vector<Item> items;
-	bool silent = false;
+	Api::SendOptions options;
 
 };
 
 struct FileLoadTo {
-	FileLoadTo(const PeerId &peer, bool silent, MsgId replyTo)
-		: peer(peer)
-		, silent(silent)
-		, replyTo(replyTo) {
+	FileLoadTo(const PeerId &peer, Api::SendOptions options, MsgId replyTo)
+	: peer(peer)
+	, options(options)
+	, replyTo(replyTo) {
 	}
 	PeerId peer;
-	bool silent;
+	Api::SendOptions options;
 	MsgId replyTo;
 };
 
@@ -214,7 +218,10 @@ struct FileLoadResult {
 	QString thumbname;
 	UploadFileParts thumbparts;
 	QByteArray thumbmd5;
-	QPixmap thumb;
+	QImage thumb;
+
+	QImage goodThumbnail;
+	QByteArray goodThumbnailBytes;
 
 	MTPPhoto photo;
 	MTPDocument document;
@@ -222,28 +229,11 @@ struct FileLoadResult {
 	PreparedPhotoThumbs photoThumbs;
 	TextWithTags caption;
 
-	void setFileData(const QByteArray &filedata) {
-		if (filedata.isEmpty()) {
-			partssize = 0;
-		} else {
-			partssize = filedata.size();
-			for (int32 i = 0, part = 0; i < partssize; i += UploadPartSize, ++part) {
-				fileparts.insert(part, filedata.mid(i, UploadPartSize));
-			}
-			filemd5.resize(32);
-			hashMd5Hex(filedata.constData(), filedata.size(), filemd5.data());
-		}
-	}
-	void setThumbData(const QByteArray &thumbdata) {
-		if (!thumbdata.isEmpty()) {
-			int32 size = thumbdata.size();
-			for (int32 i = 0, part = 0; i < size; i += UploadPartSize, ++part) {
-				thumbparts.insert(part, thumbdata.mid(i, UploadPartSize));
-			}
-			thumbmd5.resize(32);
-			hashMd5Hex(thumbdata.constData(), thumbdata.size(), thumbmd5.data());
-		}
-	}
+	bool edit = false;
+
+	void setFileData(const QByteArray &filedata);
+	void setThumbData(const QByteArray &thumbdata);
+
 };
 
 struct FileMediaInformation {
@@ -259,12 +249,13 @@ struct FileMediaInformation {
 	};
 	struct Video {
 		bool isGifv = false;
+		bool supportsStreaming = false;
 		int duration = -1;
 		QImage thumbnail;
 	};
 
 	QString filemime;
-	base::variant<Image, Song, Video> media;
+	base::optional_variant<Image, Song, Video> media;
 };
 
 class FileLoadTask final : public Task {
@@ -285,7 +276,8 @@ public:
 		SendMediaType type,
 		const FileLoadTo &to,
 		const TextWithTags &caption,
-		std::shared_ptr<SendingAlbum> album = nullptr);
+		std::shared_ptr<SendingAlbum> album = nullptr,
+		MsgId msgIdToEdit = 0);
 	FileLoadTask(
 		const QByteArray &voice,
 		int32 duration,
@@ -332,6 +324,7 @@ private:
 	VoiceWaveform _waveform;
 	SendMediaType _type;
 	TextWithTags _caption;
+	MsgId _msgIdToEdit = 0;
 
 	std::shared_ptr<FileLoadResult> _result;
 

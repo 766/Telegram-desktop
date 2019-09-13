@@ -17,7 +17,7 @@ XKB_PATH="$BUILD/libxkbcommon"
 XKB_CACHE_VERSION="3"
 
 QT_PATH="$BUILD/qt"
-QT_CACHE_VERSION="3"
+QT_CACHE_VERSION="4"
 QT_PATCH="$UPSTREAM/Telegram/Patches/qtbase_${QT_VERSION//\./_}.diff"
 
 BREAKPAD_PATH="$BUILD/breakpad"
@@ -28,7 +28,7 @@ GYP_CACHE_VERSION="3"
 GYP_PATCH="$UPSTREAM/Telegram/Patches/gyp.diff"
 
 RANGE_PATH="$BUILD/range-v3"
-RANGE_CACHE_VERSION="3"
+RANGE_CACHE_VERSION="4"
 
 VA_PATH="$BUILD/libva"
 VA_CACHE_VERSION="3"
@@ -40,7 +40,7 @@ FFMPEG_PATH="$BUILD/ffmpeg"
 FFMPEG_CACHE_VERSION="3"
 
 OPENAL_PATH="$BUILD/openal-soft"
-OPENAL_CACHE_VERSION="3"
+OPENAL_CACHE_VERSION="4"
 
 GYP_DEFINES=""
 
@@ -114,10 +114,6 @@ build() {
 
   if [[ $BUILD_VERSION == *"disable_desktop_file_generation"* ]]; then
     GYP_DEFINES+=",TDESKTOP_DISABLE_DESKTOP_FILE_GENERATION"
-  fi
-
-  if [[ $BUILD_VERSION == *"disable_unity_integration"* ]]; then
-    GYP_DEFINES+=",TDESKTOP_DISABLE_UNITY_INTEGRATION"
   fi
 
   if [[ $BUILD_VERSION == *"disable_gtk_integration"* ]]; then
@@ -220,7 +216,7 @@ buildRange() {
   rm -rf *
 
   cd "$EXTERNAL"
-  git clone --depth=1 https://github.com/ericniebler/range-v3
+  git clone --depth 1 --branch 0.5.0 https://github.com/ericniebler/range-v3
 
   cd "$EXTERNAL/range-v3"
   cp -r * "$RANGE_PATH/"
@@ -318,6 +314,7 @@ buildVdpau() {
   git clone git://anongit.freedesktop.org/vdpau/libvdpau
 
   cd "$EXTERNAL/libvdpau"
+  git checkout libvdpau-1.2
   ./autogen.sh --prefix=$VDPAU_PATH --enable-static
   make $MAKE_ARGS
   sudo make install
@@ -472,10 +469,12 @@ buildOpenAL() {
     rm -rf "$EXTERNAL/openal-soft"
   fi
   cd $OPENAL_PATH
-  rm -rf *
+  sudo rm -rf *
 
   cd "$EXTERNAL"
   git clone https://github.com/kcat/openal-soft.git
+  cd openal-soft
+  git checkout openal-soft-1.19.1
 
   cd "$EXTERNAL/openal-soft/build"
   cmake \
@@ -602,6 +601,7 @@ buildCustomQt() {
   cd "$EXTERNAL/qt${QT_VERSION}/qtbase/src/plugins/platforminputcontexts"
   git clone https://github.com/telegramdesktop/fcitx.git
   git clone https://github.com/telegramdesktop/hime.git
+  git clone https://github.com/telegramdesktop/nimf.git
   cd ../../../..
 
   ./configure -prefix $QT_PATH -release -opensource -confirm-license -qt-zlib \
@@ -673,6 +673,8 @@ buildTelegram() {
 
   cd "$UPSTREAM/Telegram/gyp"
   "$GYP_PATH/gyp" \
+      -Dapi_id=17349 \
+      -Dapi_hash=344583e45741c457fe1862106095a5eb \
       -Dbuild_defines=${GYP_DEFINES:1} \
       -Dlinux_path_xkbcommon=$XKB_PATH \
       -Dlinux_path_va=$VA_PATH \

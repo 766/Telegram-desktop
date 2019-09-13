@@ -178,6 +178,21 @@ struct Invoice {
 	int32 receiptMsgId = 0;
 };
 
+struct Poll {
+	struct Answer {
+		Utf8String text;
+		QByteArray option;
+		int votes = 0;
+		bool my = false;
+	};
+
+	uint64 id = 0;
+	Utf8String question;
+	std::vector<Answer> answers;
+	int totalVotes = 0;
+	bool closed = false;
+};
+
 struct UserpicsSlice {
 	std::vector<Photo> list;
 };
@@ -189,6 +204,7 @@ UserpicsSlice ParseUserpicsSlice(
 struct User {
 	ContactInfo info;
 	Utf8String username;
+	int32 id;
 	bool isBot = false;
 	bool isSelf = false;
 
@@ -298,6 +314,7 @@ struct Media {
 		Venue,
 		Game,
 		Invoice,
+		Poll,
 		UnsupportedMedia> content;
 	TimeId ttl = 0;
 
@@ -421,6 +438,12 @@ struct ActionSecureValuesSent {
 	std::vector<Type> types;
 };
 
+struct ActionContactSignUp {
+};
+
+struct ActionPhoneNumberRequest {
+};
+
 struct ServiceAction {
 	base::optional_variant<
 		ActionChatCreate,
@@ -441,7 +464,9 @@ struct ServiceAction {
 		ActionScreenshotTaken,
 		ActionCustomAction,
 		ActionBotAllowed,
-		ActionSecureValuesSent> content;
+		ActionSecureValuesSent,
+		ActionContactSignUp,
+		ActionPhoneNumberRequest> content;
 };
 
 ServiceAction ParseServiceAction(
@@ -466,6 +491,9 @@ struct TextPart {
 		MentionName,
 		Phone,
 		Cashtag,
+		Underline,
+		Strike,
+		Blockquote
 	};
 	Type type = Type::Text;
 	Utf8String text;
@@ -480,7 +508,9 @@ struct Message {
 	int32 fromId = 0;
 	PeerId toId = 0;
 	PeerId forwardedFromId = 0;
+	Utf8String forwardedFromName;
 	TimeId forwardedDate = 0;
+	bool forwarded = false;
 	PeerId savedFromChatId = 0;
 	Utf8String signature;
 	int32 viaBotId = 0;

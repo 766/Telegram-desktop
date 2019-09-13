@@ -8,21 +8,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 
 #include "ui/widgets/shadow.h"
+#include "ui/image/image_prepare.h"
+#include "platform/platform_info.h"
 #include "platform/platform_specific.h"
-#include "application.h"
 #include "mainwindow.h"
-#include "messenger.h"
+#include "core/application.h"
 #include "lang/lang_keys.h"
 
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QDesktopWidget>
+
 namespace Ui {
-namespace {
-
-bool InactiveMacApplication() {
-	return (cPlatform() == dbipMac || cPlatform() == dbipMacOld)
-		&& !Platform::IsApplicationActive();
-}
-
-} // namespace
 
 PopupMenu::PopupMenu(QWidget *parent, const style::PopupMenu &st)
 : RpWidget(parent)
@@ -49,8 +45,8 @@ void PopupMenu::init() {
 	using namespace rpl::mappers;
 
 	rpl::merge(
-		Messenger::Instance().passcodeLockChanges(),
-		Messenger::Instance().termsLockChanges()
+		Core::App().passcodeLockChanges(),
+		Core::App().termsLockChanges()
 	) | rpl::start_with_next([=] {
 		hideMenu(true);
 	}, lifetime());
@@ -91,26 +87,26 @@ void PopupMenu::handleMenuResize() {
 	_inner = rect().marginsRemoved(_padding);
 }
 
-QAction *PopupMenu::addAction(const QString &text, const QObject *receiver, const char* member, const style::icon *icon, const style::icon *iconOver) {
+not_null<QAction*> PopupMenu::addAction(const QString &text, const QObject *receiver, const char* member, const style::icon *icon, const style::icon *iconOver) {
 	return _menu->addAction(text, receiver, member, icon, iconOver);
 }
 
-QAction *PopupMenu::addAction(const QString &text, Fn<void()> callback, const style::icon *icon, const style::icon *iconOver) {
+not_null<QAction*> PopupMenu::addAction(const QString &text, Fn<void()> callback, const style::icon *icon, const style::icon *iconOver) {
 	return _menu->addAction(text, std::move(callback), icon, iconOver);
 }
 
-QAction *PopupMenu::addSeparator() {
+not_null<QAction*> PopupMenu::addSeparator() {
 	return _menu->addSeparator();
 }
 
 void PopupMenu::clearActions() {
-	for (auto submenu : base::take(_submenus)) {
+	for (const auto &submenu : base::take(_submenus)) {
 		delete submenu;
 	}
 	return _menu->clearActions();
 }
 
-PopupMenu::Actions &PopupMenu::actions() {
+const std::vector<not_null<QAction*>> &PopupMenu::actions() const {
 	return _menu->actions();
 }
 
@@ -121,13 +117,12 @@ void PopupMenu::paintEvent(QPaintEvent *e) {
 		Platform::StartTranslucentPaint(p, e);
 	}
 
-	auto ms = getms();
-	if (_a_show.animating(ms)) {
-		if (auto opacity = _a_opacity.current(ms, _hiding ? 0. : 1.)) {
-			_showAnimation->paintFrame(p, 0, 0, width(), _a_show.current(1.), opacity);
+	if (_a_show.animating()) {
+		if (auto opacity = _a_opacity.value(_hiding ? 0. : 1.)) {
+			_showAnimation->paintFrame(p, 0, 0, width(), _a_show.value(1.), opacity);
 		}
-	} else if (_a_opacity.animating(ms)) {
-		p.setOpacity(_a_opacity.current(0.));
+	} else if (_a_opacity.animating()) {
+		p.setOpacity(_a_opacity.value(0.));
 		p.drawPixmap(0, 0, _cache);
 	} else if (_hiding || isHidden()) {
 		hideFinished();
@@ -308,12 +303,12 @@ void PopupMenu::hideFast() {
 	if (isHidden()) return;
 
 	_hiding = false;
-	_a_opacity.finish();
+	_a_opacity.stop();
 	hideFinished();
 }
 
 void PopupMenu::hideFinished() {
-	_a_show.finish();
+	_a_show.stop();
 	_cache = QPixmap();
 	if (!isHidden()) {
 		hide();
@@ -334,7 +329,7 @@ void PopupMenu::prepareCache() {
 void PopupMenu::startOpacityAnimation(bool hiding) {
 	_hiding = false;
 	if (!_useTransparency) {
-		_a_opacity.finish();
+		_a_opacity.stop();
 		if (hiding) {
 			hideFinished();
 		} else {
@@ -361,7 +356,7 @@ void PopupMenu::showStarted() {
 
 void PopupMenu::startShowAnimation() {
 	if (!_useTransparency) {
-		_a_show.finish();
+		_a_show.stop();
 		update();
 		return;
 	}
@@ -413,9 +408,9 @@ QImage PopupMenu::grabForPanelAnimation() {
 		} else {
 			p.fillRect(_inner, _st.menu.itemBg);
 		}
-		for (auto child : children()) {
-			if (auto widget = qobject_cast<QWidget*>(child)) {
-				widget->render(&p, widget->pos(), widget->rect(), QWidget::DrawChildren | QWidget::IgnoreMask);
+		for (const auto child : children()) {
+			if (const auto widget = qobject_cast<QWidget*>(child)) {
+				RenderWidget(p, widget, widget->pos());
 			}
 		}
 	}
@@ -431,10 +426,10 @@ void PopupMenu::popup(const QPoint &p) {
 }
 
 void PopupMenu::showMenu(const QPoint &p, PopupMenu *parent, TriggeredSource source) {
-	if (!parent && InactiveMacApplication()) {
+	if (!parent && Platform::IsMac() && !Platform::IsApplicationActive()) {
 		_hiding = false;
-		_a_opacity.finish();
-		_a_show.finish();
+		_a_opacity.stop();
+		_a_show.stop();
 		_cache = QPixmap();
 		hide();
 		if (_deleteOnHide) {
@@ -446,7 +441,7 @@ void PopupMenu::showMenu(const QPoint &p, PopupMenu *parent, TriggeredSource sou
 
 	auto origin = PanelAnimation::Origin::TopLeft;
 	auto w = p - QPoint(0, _padding.top());
-	auto r = Sandbox::screenGeometry(p);
+	auto r = QApplication::desktop()->screenGeometry(p);
 	_useTransparency = Platform::TranslucentWindowsSupported(p);
 	setAttribute(Qt::WA_OpaquePaintEvent, !_useTransparency);
 	handleCompositingUpdate();
@@ -498,15 +493,13 @@ void PopupMenu::showMenu(const QPoint &p, PopupMenu *parent, TriggeredSource sou
 }
 
 PopupMenu::~PopupMenu() {
-	for (const auto submenu : base::take(_submenus)) {
+	for (const auto &submenu : base::take(_submenus)) {
 		delete submenu;
 	}
 	if (const auto parent = parentWidget()) {
-		crl::on_main(parent, [=] {
-			if (!parent->isHidden()) {
-				parent->activateWindow();
-			}
-		});
+		if (QApplication::focusWidget() != nullptr) {
+			Core::App().activateWindowDelayed(parent);
+		}
 	}
 	if (_destroyedCallback) {
 		_destroyedCallback();

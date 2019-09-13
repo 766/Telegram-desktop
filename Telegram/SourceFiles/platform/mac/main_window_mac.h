@@ -11,14 +11,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/mac/specific_mac_p.h"
 #include "base/timer.h"
 
+#include <QtWidgets/QMenuBar>
+
 namespace Platform {
 
 class MainWindow : public Window::MainWindow {
-	// The Q_OBJECT meta info is used for qobject_cast to MainWindow!
+	// The Q_OBJECT meta info is used for qobject_cast!
 	Q_OBJECT
 
 public:
-	MainWindow();
+	explicit MainWindow(not_null<Window::Controller*> controller);
 
 	void psFirstShow();
 	void psInitSysMenu();
@@ -37,6 +39,8 @@ public:
 
 	~MainWindow();
 
+	void updateWindowIcon() override;
+
 	class Private;
 
 public slots:
@@ -50,13 +54,19 @@ public slots:
 	void psMacDelete();
 	void psMacSelectAll();
 
+	void psMacBold();
+	void psMacItalic();
+	void psMacUnderline();
+	void psMacStrikeOut();
+	void psMacMonospace();
+	void psMacClearFormat();
+
 protected:
 	bool eventFilter(QObject *obj, QEvent *evt) override;
 
 	void handleActiveChangedHook() override;
 	void stateChangedHook(Qt::WindowState state) override;
 	void initHook() override;
-	void updateWindowIcon() override;
 	void titleVisibilityChangedHook() override;
 	void unreadCounterChangedHook() override;
 
@@ -83,12 +93,14 @@ protected:
 	void closeWithoutDestroy() override;
 
 private:
+	friend class Private;
+
+	void initTouchBar();
 	void hideAndDeactivate();
 	void createGlobalMenu();
 	void updateTitleCounter();
 	void updateIconCounters();
 
-	friend class Private;
 	std::unique_ptr<Private> _private;
 
 	mutable bool psIdle;
@@ -110,6 +122,13 @@ private:
 	QAction *psNewGroup = nullptr;
 	QAction *psNewChannel = nullptr;
 	QAction *psShowTelegram = nullptr;
+
+	QAction *psBold = nullptr;
+	QAction *psItalic = nullptr;
+	QAction *psUnderline = nullptr;
+	QAction *psStrikeOut = nullptr;
+	QAction *psMonospace = nullptr;
+	QAction *psClearFormat = nullptr;
 
 	int _customTitleHeight = 0;
 

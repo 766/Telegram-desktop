@@ -15,13 +15,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Ui {
 namespace details {
 
+struct ForwardTag {
+};
+
+struct InPlaceTag {
+};
+
 template <typename Value>
 class AttachmentOwner : public QObject {
 public:
 	template <typename OtherValue>
-	AttachmentOwner(QObject *parent, OtherValue &&value)
+	AttachmentOwner(QObject *parent, const ForwardTag&, OtherValue &&value)
 	: QObject(parent)
 	, _value(std::forward<OtherValue>(value)) {
+	}
+
+	template <typename ...Args>
+	AttachmentOwner(QObject *parent, const InPlaceTag&, Args &&...args)
+	: QObject(parent)
+	, _value(std::forward<Args>(args)...) {
 	}
 
 	not_null<Value*> value() {
@@ -44,16 +56,29 @@ inline base::unique_qptr<Widget> CreateObject(Args &&...args) {
 		std::forward<Args>(args)...);
 }
 
-template <typename Widget, typename Parent, typename ...Args>
-inline Widget *CreateChild(
+template <typename Value, typename Parent, typename ...Args>
+inline Value *CreateChild(
 		Parent *parent,
 		Args &&...args) {
 	Expects(parent != nullptr);
-	return new Widget(parent, std::forward<Args>(args)...);
+
+	if constexpr (std::is_base_of_v<QObject, Value>) {
+		return new Value(parent, std::forward<Args>(args)...);
+	} else {
+		return CreateChild<details::AttachmentOwner<Value>>(
+			parent,
+			details::InPlaceTag{},
+			std::forward<Args>(args)...)->value();
+	}
 }
 
 inline void DestroyChild(QWidget *child) {
 	delete child;
+}
+
+template <typename ...Args>
+inline auto Connect(Args &&...args) {
+	return QObject::connect(std::forward<Args>(args)...);
 }
 
 void ResizeFitChild(
@@ -66,8 +91,8 @@ inline not_null<std::decay_t<Value>*> AttachAsChild(
 		Value &&value) {
 	return CreateChild<details::AttachmentOwner<std::decay_t<Value>>>(
 		parent.get(),
-		std::forward<Value>(value)
-	)->value();
+		details::ForwardTag{},
+		std::forward<Value>(value))->value();
 }
 
 template <typename Widget>
@@ -92,6 +117,8 @@ public:
 	rpl::producer<bool> shownValue() const;
 	rpl::producer<QRect> paintRequest() const;
 	rpl::producer<> alive() const;
+	rpl::producer<> windowDeactivateEvents() const;
+	rpl::producer<> macWindowDeactivateEvents() const;
 
 	template <typename Error, typename Generator>
 	void showOn(rpl::producer<bool, Error, Generator> &&shown) {
@@ -102,7 +129,10 @@ public:
 		}, lifetime());
 	}
 
+
 	rpl::lifetime &lifetime();
+
+	virtual ~RpWidgetMethods() = default;
 
 protected:
 	bool handleEvent(QEvent *event);
@@ -123,6 +153,8 @@ private:
 	};
 
 	virtual void callSetVisible(bool visible) = 0;
+	virtual QWidget *callGetWidget() = 0;
+	virtual const QWidget *callGetWidget() const = 0;
 	virtual QPointer<QObject> callCreateWeak() = 0;
 	virtual QRect callGetGeometry() const = 0;
 	virtual bool callIsHidden() const = 0;
@@ -170,6 +202,12 @@ protected:
 private:
 	void callSetVisible(bool visible) override {
 		Self::setVisible(visible);
+	}
+	QWidget *callGetWidget() override {
+		return this;
+	}
+	const QWidget *callGetWidget() const override {
+		return this;
 	}
 	QPointer<QObject> callCreateWeak() override {
 		return QPointer<QObject>((QObject*)this);

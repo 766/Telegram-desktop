@@ -7,23 +7,34 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/mac/main_window_mac.h"
 
+#include "data/data_session.h"
 #include "styles/style_window.h"
 #include "mainwindow.h"
 #include "mainwidget.h"
-#include "application.h"
-#include "messenger.h"
-#include "auth_session.h"
+#include "core/application.h"
+#include "core/sandbox.h"
+#include "main/main_session.h"
 #include "history/history.h"
 #include "history/history_widget.h"
 #include "history/history_inner_widget.h"
+#include "main/main_account.h" // Account::sessionChanges.
+#include "media/player/media_player_instance.h"
+#include "media/audio/media_audio.h"
 #include "storage/localstorage.h"
 #include "window/notifications_manager_default.h"
+#include "window/window_session_controller.h"
 #include "window/themes/window_theme.h"
+#include "platform/mac/mac_touchbar.h"
 #include "platform/platform_notifications_manager.h"
+#include "platform/platform_info.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/about_box.h"
 #include "lang/lang_keys.h"
 #include "platform/mac/mac_utilities.h"
+#include "ui/widgets/input_fields.h"
+
+#include <QtWidgets/QApplication>
+#include <QtGui/QClipboard>
 
 #include <Cocoa/Cocoa.h>
 #include <CoreFoundation/CFURL.h>
@@ -89,11 +100,30 @@ private:
 
 #endif // OS_MAC_OLD
 
+class EventFilter : public QAbstractNativeEventFilter {
+public:
+	EventFilter(not_null<MainWindow*> window) : _window(window) {
+	}
+
+	bool nativeEventFilter(
+			const QByteArray &eventType,
+			void *message,
+			long *result) {
+		return Core::Sandbox::Instance().customEnterFromEventLoop([&] {
+			return _window->psFilterNativeEvent(message);
+		});
+	}
+
+private:
+	not_null<MainWindow*> _window;
+
+};
+
 } // namespace
 
 class MainWindow::Private {
 public:
-	Private(MainWindow *window);
+	explicit Private(not_null<MainWindow*> window);
 
 	void setNativeWindow(NSWindow *window, NSView *view);
 	void setWindowBadge(const QString &str);
@@ -109,13 +139,15 @@ public:
 
 	bool clipboardHasText();
 
+	TouchBar *_touchBar = nil;
+
 	~Private();
 
 private:
 	void initCustomTitle();
 	void refreshWeakTitleReferences();
 
-	MainWindow *_public;
+	not_null<MainWindow*> _public;
 	friend class MainWindow;
 
 #ifdef OS_MAC_OLD
@@ -131,10 +163,12 @@ private:
 	bool _useNativeTitle = false;
 	bool _inFullScreen = false;
 
-	MainWindowObserver *_observer;
+	MainWindowObserver *_observer = nullptr;
 	NSPasteboard *_generalPasteboard = nullptr;
 	int _generalPasteboardChangeCount = -1;
 	bool _generalPasteboardHasText = false;
+
+	EventFilter _nativeEventFilter;
 
 };
 
@@ -178,10 +212,30 @@ private:
 @end // @implementation MainWindowObserver
 
 namespace Platform {
+namespace {
 
-MainWindow::Private::Private(MainWindow *window)
+void SendKeySequence(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+	const auto focused = QApplication::focusWidget();
+	if (qobject_cast<QLineEdit*>(focused) || qobject_cast<QTextEdit*>(focused) || qobject_cast<HistoryInner*>(focused)) {
+		QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyPress, key, modifiers));
+		QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyRelease, key, modifiers));
+	}
+}
+
+void ForceDisabled(QAction *action, bool disabled) {
+	if (action->isEnabled()) {
+		if (disabled) action->setDisabled(true);
+	} else if (!disabled) {
+		action->setDisabled(false);
+	}
+}
+
+} // namespace
+
+MainWindow::Private::Private(not_null<MainWindow*> window)
 : _public(window)
-, _observer([[MainWindowObserver alloc] init:this]) {
+, _observer([[MainWindowObserver alloc] init:this])
+, _nativeEventFilter(window) {
 	_generalPasteboard = [NSPasteboard generalPasteboard];
 
 	@autoreleasepool {
@@ -334,7 +388,7 @@ bool MainWindow::Private::clipboardHasText() {
 	auto currentChangeCount = static_cast<int>([_generalPasteboard changeCount]);
 	if (_generalPasteboardChangeCount != currentChangeCount) {
 		_generalPasteboardChangeCount = currentChangeCount;
-		_generalPasteboardHasText = !Application::clipboard()->text().isEmpty();
+		_generalPasteboardHasText = !QGuiApplication::clipboard()->text().isEmpty();
 	}
 	return _generalPasteboardHasText;
 }
@@ -373,14 +427,18 @@ MainWindow::Private::~Private() {
 	[_observer release];
 }
 
-MainWindow::MainWindow()
-: _private(std::make_unique<Private>(this)) {
+MainWindow::MainWindow(not_null<Window::Controller*> controller)
+: Window::MainWindow(controller)
+, _private(std::make_unique<Private>(this)) {
+	QCoreApplication::instance()->installNativeEventFilter(
+		&_private->_nativeEventFilter);
+
 #ifndef OS_MAC_OLD
 	auto forceOpenGL = std::make_unique<QOpenGLWidget>(this);
 #endif // !OS_MAC_OLD
 
-	trayImg = st::macTrayIcon.instance(QColor(0, 0, 0, 180), dbisOne);
-	trayImgSel = st::macTrayIcon.instance(QColor(255, 255, 255), dbisOne);
+	trayImg = st::macTrayIcon.instance(QColor(0, 0, 0, 180), 100);
+	trayImgSel = st::macTrayIcon.instance(QColor(255, 255, 255), 100);
 
 	_hideAfterFullScreenTimer.setCallback([this] { hideAndDeactivate(); });
 
@@ -389,6 +447,34 @@ MainWindow::MainWindow()
 			_private->updateNativeTitle();
 		}
 	});
+
+	initTouchBar();
+}
+
+void MainWindow::initTouchBar() {
+	if (!IsMac10_13OrGreater()) {
+		return;
+	}
+
+	account().sessionValue(
+	) | rpl::start_with_next([=](Main::Session *session) {
+		if (session) {
+			// We need only common pinned dialogs.
+			if (!_private->_touchBar) {
+				if (auto view = reinterpret_cast<NSView*>(winId())) {
+					// Create TouchBar.
+					[NSApplication sharedApplication].automaticCustomizeTouchBarMenuItemEnabled = YES;
+					_private->_touchBar = [[TouchBar alloc] init:view];
+				}
+			}
+		} else {
+			if (_private->_touchBar) {
+				[_private->_touchBar setTouchBar:Platform::TouchBarType::None];
+				[_private->_touchBar release];
+			}
+			_private->_touchBar = nil;
+		}
+	}, lifetime());
 }
 
 void MainWindow::closeWithoutDestroy() {
@@ -451,9 +537,7 @@ void MainWindow::psSetupTrayIcon() {
 		icon.addPixmap(QPixmap::fromImage(psTrayIcon(true), Qt::ColorOnly), QIcon::Selected);
 
 		trayIcon->setIcon(icon);
-		trayIcon->setToolTip(str_const_toString(AppName));
-		connect(trayIcon, SIGNAL(activated(QSystemTrayIcon::ActivationReason)), this, SLOT(toggleTray(QSystemTrayIcon::ActivationReason)), Qt::UniqueConnection);
-		App::wnd()->updateTrayMenu();
+		attachToTrayIcon(trayIcon);
 	}
 	updateIconCounters();
 
@@ -522,21 +606,24 @@ void MainWindow::unreadCounterChangedHook() {
 }
 
 void MainWindow::updateIconCounters() {
-	auto counter = App::histories().unreadBadge();
+	const auto counter = Core::App().unreadBadge();
+	const auto muted = Core::App().unreadBadgeMuted();
 
-	QString cnt = (counter < 1000) ? QString("%1").arg(counter) : QString("..%1").arg(counter % 100, 2, 10, QChar('0'));
-	_private->setWindowBadge(counter ? cnt : QString());
+	const auto string = !counter
+		? QString()
+		: (counter < 1000)
+		? QString("%1").arg(counter)
+		: QString("..%1").arg(counter % 100, 2, 10, QChar('0'));
+	_private->setWindowBadge(string);
 
 	if (trayIcon) {
-		bool muted = App::histories().unreadOnlyMuted();
 		bool dm = objc_darkMode();
-
 		auto &bg = (muted ? st::trayCounterBgMute : st::trayCounterBg);
 		QIcon icon;
 		QImage img(psTrayIcon(dm)), imgsel(psTrayIcon(true));
 		img.detach();
 		imgsel.detach();
-		int32 size = cRetina() ? 44 : 22;
+		int32 size = 22 * cIntRetinaFactor();
 		_placeCounter(img, size, counter, bg, (dm && muted) ? st::trayCounterFgMacInvert : st::trayCounterFg);
 		_placeCounter(imgsel, size, counter, st::trayCounterBgMacInvert, st::trayCounterFgMacInvert);
 		icon.addPixmap(App::pixmapFromImageInPlace(std::move(img)));
@@ -576,7 +663,7 @@ void MainWindow::psFirstShow() {
 
 void MainWindow::createGlobalMenu() {
 	auto main = psMainMenu.addMenu(qsl("Telegram"));
-	auto about = main->addAction(lng_mac_menu_about_telegram(lt_telegram, qsl("Telegram")));
+	auto about = main->addAction(tr::lng_mac_menu_about_telegram(tr::now, lt_telegram, qsl("Telegram")));
 	connect(about, &QAction::triggered, about, [] {
 		if (App::wnd() && App::wnd()->isHidden()) App::wnd()->showFromTray();
 		Ui::show(Box<AboutBox>());
@@ -584,87 +671,106 @@ void MainWindow::createGlobalMenu() {
 	about->setMenuRole(QAction::AboutQtRole);
 
 	main->addSeparator();
-	QAction *prefs = main->addAction(lang(lng_mac_menu_preferences), App::wnd(), SLOT(showSettings()), QKeySequence(Qt::ControlModifier | Qt::Key_Comma));
+	QAction *prefs = main->addAction(tr::lng_mac_menu_preferences(tr::now), App::wnd(), SLOT(showSettings()), QKeySequence(Qt::ControlModifier | Qt::Key_Comma));
 	prefs->setMenuRole(QAction::PreferencesRole);
 
-	QMenu *file = psMainMenu.addMenu(lang(lng_mac_menu_file));
-	psLogout = file->addAction(lang(lng_mac_menu_logout), App::wnd(), SLOT(onLogout()));
+	QMenu *file = psMainMenu.addMenu(tr::lng_mac_menu_file(tr::now));
+	psLogout = file->addAction(tr::lng_mac_menu_logout(tr::now), App::wnd(), SLOT(onLogout()));
 
-	QMenu *edit = psMainMenu.addMenu(lang(lng_mac_menu_edit));
-	psUndo = edit->addAction(lang(lng_mac_menu_undo), this, SLOT(psMacUndo()), QKeySequence::Undo);
-	psRedo = edit->addAction(lang(lng_mac_menu_redo), this, SLOT(psMacRedo()), QKeySequence::Redo);
+	QMenu *edit = psMainMenu.addMenu(tr::lng_mac_menu_edit(tr::now));
+	psUndo = edit->addAction(tr::lng_mac_menu_undo(tr::now), this, SLOT(psMacUndo()), QKeySequence::Undo);
+	psRedo = edit->addAction(tr::lng_mac_menu_redo(tr::now), this, SLOT(psMacRedo()), QKeySequence::Redo);
 	edit->addSeparator();
-	psCut = edit->addAction(lang(lng_mac_menu_cut), this, SLOT(psMacCut()), QKeySequence::Cut);
-	psCopy = edit->addAction(lang(lng_mac_menu_copy), this, SLOT(psMacCopy()), QKeySequence::Copy);
-	psPaste = edit->addAction(lang(lng_mac_menu_paste), this, SLOT(psMacPaste()), QKeySequence::Paste);
-	psDelete = edit->addAction(lang(lng_mac_menu_delete), this, SLOT(psMacDelete()), QKeySequence(Qt::ControlModifier | Qt::Key_Backspace));
+	psCut = edit->addAction(tr::lng_mac_menu_cut(tr::now), this, SLOT(psMacCut()), QKeySequence::Cut);
+	psCopy = edit->addAction(tr::lng_mac_menu_copy(tr::now), this, SLOT(psMacCopy()), QKeySequence::Copy);
+	psPaste = edit->addAction(tr::lng_mac_menu_paste(tr::now), this, SLOT(psMacPaste()), QKeySequence::Paste);
+	psDelete = edit->addAction(tr::lng_mac_menu_delete(tr::now), this, SLOT(psMacDelete()), QKeySequence(Qt::ControlModifier | Qt::Key_Backspace));
+
 	edit->addSeparator();
-	psSelectAll = edit->addAction(lang(lng_mac_menu_select_all), this, SLOT(psMacSelectAll()), QKeySequence::SelectAll);
+	psBold = edit->addAction(tr::lng_menu_formatting_bold(tr::now), this, SLOT(psMacBold()), QKeySequence::Bold);
+	psItalic = edit->addAction(tr::lng_menu_formatting_italic(tr::now), this, SLOT(psMacItalic()), QKeySequence::Italic);
+	psUnderline = edit->addAction(tr::lng_menu_formatting_underline(tr::now), this, SLOT(psMacUnderline()), QKeySequence::Underline);
+	psStrikeOut = edit->addAction(tr::lng_menu_formatting_strike_out(tr::now), this, SLOT(psMacStrikeOut()), Ui::kStrikeOutSequence);
+	psMonospace = edit->addAction(tr::lng_menu_formatting_monospace(tr::now), this, SLOT(psMacMonospace()), Ui::kMonospaceSequence);
+	psClearFormat = edit->addAction(tr::lng_menu_formatting_clear(tr::now), this, SLOT(psMacClearFormat()), Ui::kClearFormatSequence);
 
-	QMenu *window = psMainMenu.addMenu(lang(lng_mac_menu_window));
-	psContacts = window->addAction(lang(lng_mac_menu_contacts));
-	connect(psContacts, &QAction::triggered, psContacts, [] {
-		if (App::wnd() && App::wnd()->isHidden()) App::wnd()->showFromTray();
+	edit->addSeparator();
+	psSelectAll = edit->addAction(tr::lng_mac_menu_select_all(tr::now), this, SLOT(psMacSelectAll()), QKeySequence::SelectAll);
 
-		if (!AuthSession::Exists()) return;
-		Ui::show(Box<PeerListBox>(std::make_unique<ContactsBoxController>(), [](not_null<PeerListBox*> box) {
-			box->addButton(langFactory(lng_close), [box] { box->closeBox(); });
-			box->addLeftButton(langFactory(lng_profile_add_contact), [] { App::wnd()->onShowAddContact(); });
+	QMenu *window = psMainMenu.addMenu(tr::lng_mac_menu_window(tr::now));
+	psContacts = window->addAction(tr::lng_mac_menu_contacts(tr::now));
+	connect(psContacts, &QAction::triggered, psContacts, crl::guard(this, [=] {
+		if (isHidden()) {
+			App::wnd()->showFromTray();
+		}
+		if (!account().sessionExists()) {
+			return;
+		}
+		Ui::show(Box<PeerListBox>(std::make_unique<ContactsBoxController>(sessionController()), [](not_null<PeerListBox*> box) {
+			box->addButton(tr::lng_close(), [box] { box->closeBox(); });
+			box->addLeftButton(tr::lng_profile_add_contact(), [] { App::wnd()->onShowAddContact(); });
 		}));
-	});
-	psAddContact = window->addAction(lang(lng_mac_menu_add_contact), App::wnd(), SLOT(onShowAddContact()));
+	}));
+	psAddContact = window->addAction(tr::lng_mac_menu_add_contact(tr::now), App::wnd(), SLOT(onShowAddContact()));
 	window->addSeparator();
-	psNewGroup = window->addAction(lang(lng_mac_menu_new_group), App::wnd(), SLOT(onShowNewGroup()));
-	psNewChannel = window->addAction(lang(lng_mac_menu_new_channel), App::wnd(), SLOT(onShowNewChannel()));
+	psNewGroup = window->addAction(tr::lng_mac_menu_new_group(tr::now), App::wnd(), SLOT(onShowNewGroup()));
+	psNewChannel = window->addAction(tr::lng_mac_menu_new_channel(tr::now), App::wnd(), SLOT(onShowNewChannel()));
 	window->addSeparator();
-	psShowTelegram = window->addAction(lang(lng_mac_menu_show), App::wnd(), SLOT(showFromTray()));
+	psShowTelegram = window->addAction(tr::lng_mac_menu_show(tr::now), App::wnd(), SLOT(showFromTray()));
 
 	updateGlobalMenu();
 }
 
-namespace {
-	void _sendKeySequence(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-		QWidget *focused = QApplication::focusWidget();
-		if (qobject_cast<QLineEdit*>(focused) || qobject_cast<QTextEdit*>(focused) || qobject_cast<HistoryInner*>(focused)) {
-			QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyPress, key, modifiers));
-			QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyRelease, key, modifiers));
-		}
-	}
-	void _forceDisabled(QAction *action, bool disabled) {
-		if (action->isEnabled()) {
-			if (disabled) action->setDisabled(true);
-		} else if (!disabled) {
-			action->setDisabled(false);
-		}
-	}
-}
-
 void MainWindow::psMacUndo() {
-	_sendKeySequence(Qt::Key_Z, Qt::ControlModifier);
+	SendKeySequence(Qt::Key_Z, Qt::ControlModifier);
 }
 
 void MainWindow::psMacRedo() {
-	_sendKeySequence(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+	SendKeySequence(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
 }
 
 void MainWindow::psMacCut() {
-	_sendKeySequence(Qt::Key_X, Qt::ControlModifier);
+	SendKeySequence(Qt::Key_X, Qt::ControlModifier);
 }
 
 void MainWindow::psMacCopy() {
-	_sendKeySequence(Qt::Key_C, Qt::ControlModifier);
+	SendKeySequence(Qt::Key_C, Qt::ControlModifier);
 }
 
 void MainWindow::psMacPaste() {
-	_sendKeySequence(Qt::Key_V, Qt::ControlModifier);
+	SendKeySequence(Qt::Key_V, Qt::ControlModifier);
 }
 
 void MainWindow::psMacDelete() {
-	_sendKeySequence(Qt::Key_Delete);
+	SendKeySequence(Qt::Key_Delete);
 }
 
 void MainWindow::psMacSelectAll() {
-	_sendKeySequence(Qt::Key_A, Qt::ControlModifier);
+	SendKeySequence(Qt::Key_A, Qt::ControlModifier);
+}
+
+void MainWindow::psMacBold() {
+	SendKeySequence(Qt::Key_B, Qt::ControlModifier);
+}
+
+void MainWindow::psMacItalic() {
+	SendKeySequence(Qt::Key_I, Qt::ControlModifier);
+}
+
+void MainWindow::psMacUnderline() {
+	SendKeySequence(Qt::Key_U, Qt::ControlModifier);
+}
+
+void MainWindow::psMacStrikeOut() {
+	SendKeySequence(Qt::Key_X, Qt::ControlModifier | Qt::ShiftModifier);
+}
+
+void MainWindow::psMacMonospace() {
+	SendKeySequence(Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+}
+
+void MainWindow::psMacClearFormat() {
+	SendKeySequence(Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
 }
 
 void MainWindow::psInitSysMenu() {
@@ -679,6 +785,7 @@ void MainWindow::updateGlobalMenuHook() {
 	auto focused = QApplication::focusWidget();
 	bool canUndo = false, canRedo = false, canCut = false, canCopy = false, canPaste = false, canDelete = false, canSelectAll = false;
 	auto clipboardHasText = _private->clipboardHasText();
+	auto showTouchBarItem = false;
 	if (auto edit = qobject_cast<QLineEdit*>(focused)) {
 		canCut = canCopy = canDelete = edit->hasSelectedText();
 		canSelectAll = !edit->text().isEmpty();
@@ -691,28 +798,43 @@ void MainWindow::updateGlobalMenuHook() {
 		canUndo = edit->document()->isUndoAvailable();
 		canRedo = edit->document()->isRedoAvailable();
 		canPaste = clipboardHasText;
+		if (canCopy) {
+			if (const auto inputField = qobject_cast<Ui::InputField*>(focused->parentWidget())) {
+				showTouchBarItem = inputField->isMarkdownEnabled();
+			}
+		}
 	} else if (auto list = qobject_cast<HistoryInner*>(focused)) {
 		canCopy = list->canCopySelected();
 		canDelete = list->canDeleteSelected();
 	}
+	if (_private->_touchBar) {
+		[_private->_touchBar showInputFieldItem:showTouchBarItem];
+	}
 	App::wnd()->updateIsActive(0);
-	const auto logged = AuthSession::Exists();
-	const auto locked = !Messenger::Instance().locked();
+	const auto logged = account().sessionExists();
+	const auto locked = Core::App().locked();
 	const auto inactive = !logged || locked;
-	const auto support = logged && Auth().supportMode();
-	_forceDisabled(psLogout, !logged && !locked);
-	_forceDisabled(psUndo, !canUndo);
-	_forceDisabled(psRedo, !canRedo);
-	_forceDisabled(psCut, !canCut);
-	_forceDisabled(psCopy, !canCopy);
-	_forceDisabled(psPaste, !canPaste);
-	_forceDisabled(psDelete, !canDelete);
-	_forceDisabled(psSelectAll, !canSelectAll);
-	_forceDisabled(psContacts, inactive || support);
-	_forceDisabled(psAddContact, inactive);
-	_forceDisabled(psNewGroup, inactive || support);
-	_forceDisabled(psNewChannel, inactive || support);
-	_forceDisabled(psShowTelegram, App::wnd()->isActive());
+	const auto support = logged && account().session().supportMode();
+	ForceDisabled(psLogout, !logged && !locked);
+	ForceDisabled(psUndo, !canUndo);
+	ForceDisabled(psRedo, !canRedo);
+	ForceDisabled(psCut, !canCut);
+	ForceDisabled(psCopy, !canCopy);
+	ForceDisabled(psPaste, !canPaste);
+	ForceDisabled(psDelete, !canDelete);
+	ForceDisabled(psSelectAll, !canSelectAll);
+	ForceDisabled(psContacts, inactive || support);
+	ForceDisabled(psAddContact, inactive);
+	ForceDisabled(psNewGroup, inactive || support);
+	ForceDisabled(psNewChannel, inactive || support);
+	ForceDisabled(psShowTelegram, App::wnd()->isActive());
+
+	ForceDisabled(psBold, !showTouchBarItem);
+	ForceDisabled(psItalic, !showTouchBarItem);
+	ForceDisabled(psUnderline, !showTouchBarItem);
+	ForceDisabled(psStrikeOut, !showTouchBarItem);
+	ForceDisabled(psMonospace, !showTouchBarItem);
+	ForceDisabled(psClearFormat, !showTouchBarItem);
 }
 
 bool MainWindow::psFilterNativeEvent(void *event) {

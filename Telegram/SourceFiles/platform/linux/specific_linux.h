@@ -7,8 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include <execinfo.h>
+#include "platform/platform_specific.h"
+
 #include <signal.h>
+
+namespace Data {
+class LocationPoint;
+} // namespace Data
 
 namespace Platform {
 
@@ -31,6 +36,14 @@ inline void ReInitOnTopPanel(QWidget *panel) {
 
 QString CurrentExecutablePath(int argc, char *argv[]);
 
+inline std::optional<crl::time> LastUserInputTime() {
+	return std::nullopt;
+}
+
+inline constexpr bool UseMainQueueGeneric() {
+	return true;
+}
+
 } // namespace Platform
 
 inline QString psServerPrefix() {
@@ -47,17 +60,12 @@ void psWriteDump();
 
 void psDeleteDir(const QString &dir);
 
-void psUserActionDone();
-bool psIdleSupported();
-TimeMs psIdleTime();
-
 QStringList psInitLogs();
 void psClearInitLogs();
 
 void psActivateProcess(uint64 pid = 0);
 QString psLocalServerPrefix();
 QString psAppDataPath();
-QString psDownloadPath();
 void psAutoStart(bool start, bool silent = false);
 void psSendToMenu(bool send, bool silent = false);
 
@@ -67,8 +75,6 @@ void psBringToBack(QWidget *w);
 
 int psCleanup();
 int psFixPrevious();
-
-QAbstractNativeEventFilter *psNativeEventFilter();
 
 void psNewVersion();
 
@@ -105,4 +111,4 @@ public:
 
 bool linuxMoveFile(const char *from, const char *to);
 
-bool psLaunchMaps(const LocationCoords &coords);
+bool psLaunchMaps(const Data::LocationPoint &point);

@@ -203,6 +203,9 @@ Stats AbstractWriter::produceTestExample(
 		if (++count % 3 == 0) {
 			message.forwardedFromId = Data::UserPeerId(user.info.userId);
 			message.forwardedDate = date();
+		} else if (count % 3 == 2) {
+			message.forwardedFromName = "Test hidden forward";
+			message.forwardedDate = date();
 		}
 		message.fromId = user.info.userId;
 		message.replyToMsgId = counter();
@@ -437,6 +440,12 @@ Stats AbstractWriter::produceTestExample(
 		using Type = Data::ActionSecureValuesSent::Type;
 		action.types.push_back(Type::BankStatement);
 		action.types.push_back(Type::Phone);
+		message.action.content = action;
+		return message;
+	}());
+	sliceChat2.list.push_back([&] {
+		auto message = serviceMessage();
+		auto action = Data::ActionContactSignUp();
 		message.action.content = action;
 		return message;
 	}());

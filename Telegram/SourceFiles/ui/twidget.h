@@ -57,7 +57,30 @@ QImage GrabWidgetToImage(
 	QRect rect = QRect(),
 	QColor bg = QColor(255, 255, 255, 0));
 
+void RenderWidget(
+	QPainter &painter,
+	not_null<QWidget*> source,
+	const QPoint &targetOffset = QPoint(),
+	const QRegion &sourceRegion = QRegion(),
+	QWidget::RenderFlags renderFlags
+		= QWidget::DrawChildren | QWidget::IgnoreMask);
+
+
 void ForceFullRepaint(not_null<QWidget*> widget);
+
+void PostponeCall(FnMut<void()> &&callable);
+
+template <
+	typename Guard,
+	typename Callable,
+	typename GuardTraits = crl::guard_traits<std::decay_t<Guard>>,
+	typename = std::enable_if_t<
+		sizeof(GuardTraits) != crl::details::dependent_zero<GuardTraits>>>
+inline void PostponeCall(Guard &&object, Callable &&callable) {
+	return PostponeCall(crl::guard(
+		std::forward<Guard>(object),
+		std::forward<Callable>(callable)));
+}
 
 } // namespace Ui
 
@@ -224,6 +247,25 @@ public:
 		return QMargins();
 	}
 
+	bool inFocusChain() const {
+		return Ui::InFocusChain(this);
+	}
+
+	void hideChildren() {
+		for (auto child : Base::children()) {
+			if (child->isWidgetType()) {
+				static_cast<QWidget*>(child)->hide();
+			}
+		}
+	}
+	void showChildren() {
+		for (auto child : Base::children()) {
+			if (child->isWidgetType()) {
+				static_cast<QWidget*>(child)->show();
+			}
+		}
+	}
+
 	void moveToLeft(int x, int y, int outerw = 0) {
 		auto margins = getMargins();
 		x -= margins.left();
@@ -327,29 +369,11 @@ private:
 };
 
 class TWidget : public TWidgetHelper<QWidget> {
+	// The Q_OBJECT meta info is used for qobject_cast!
 	Q_OBJECT
 
 public:
 	TWidget(QWidget *parent = nullptr) : TWidgetHelper<QWidget>(parent) {
-	}
-
-	bool inFocusChain() const {
-		return Ui::InFocusChain(this);
-	}
-
-	void hideChildren() {
-		for (auto child : children()) {
-			if (child->isWidgetType()) {
-				static_cast<QWidget*>(child)->hide();
-			}
-		}
-	}
-	void showChildren() {
-		for (auto child : children()) {
-			if (child->isWidgetType()) {
-				static_cast<QWidget*>(child)->show();
-			}
-		}
 	}
 
 	// Get the size of the widget as it should be.

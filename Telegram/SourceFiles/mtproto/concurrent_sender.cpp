@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/mtp_instance.h"
 #include "mtproto/rpc_sender.h"
-#include "mtproto/session.h"
 
 namespace MTP {
 
@@ -19,7 +18,7 @@ public:
 		not_null<ConcurrentSender*> sender,
 		Fn<void(FnMut<void()>)> runner);
 
-	void operator()(
+	bool operator()(
 		mtpRequestId requestId,
 		const mtpPrime *from,
 		const mtpPrime *end) override;
@@ -55,7 +54,7 @@ ConcurrentSender::RPCDoneHandler::RPCDoneHandler(
 , _runner(std::move(runner)) {
 }
 
-void ConcurrentSender::RPCDoneHandler::operator()(
+bool ConcurrentSender::RPCDoneHandler::operator()(
 		mtpRequestId requestId,
 		const mtpPrime *from,
 		const mtpPrime *end) {
@@ -67,6 +66,7 @@ void ConcurrentSender::RPCDoneHandler::operator()(
 			strong->senderRequestDone(requestId, std::move(moved));
 		}
 	});
+	return true;
 }
 
 ConcurrentSender::RPCFailHandler::RPCFailHandler(
@@ -119,7 +119,7 @@ void ConcurrentSender::RequestBuilder::setToDC(ShiftedDcId dcId) noexcept {
 	_dcId = dcId;
 }
 
-void ConcurrentSender::RequestBuilder::setCanWait(TimeMs ms) noexcept {
+void ConcurrentSender::RequestBuilder::setCanWait(crl::time ms) noexcept {
 	_canWait = ms;
 }
 
@@ -179,12 +179,12 @@ void ConcurrentSender::senderRequestDone(
 		mtpRequestId requestId,
 		bytes::const_span result) {
 	if (auto handlers = _requests.take(requestId)) {
-		try {
-			std::move(handlers->done)(requestId, result);
-		} catch (Exception &e) {
-			std::move(handlers->fail)(requestId, internal::rpcClientError(
-				"RESPONSE_PARSE_FAILED",
-				QString("exception text: ") + e.what()));
+		if (!handlers->done(requestId, result)) {
+			handlers->fail(
+				requestId,
+				RPCError::Local(
+					"RESPONSE_PARSE_FAILED",
+					"ConcurrentSender::senderRequestDone"));
 		}
 	}
 }
@@ -193,7 +193,7 @@ void ConcurrentSender::senderRequestFail(
 		mtpRequestId requestId,
 		RPCError &&error) {
 	if (auto handlers = _requests.take(requestId)) {
-		std::move(handlers->fail)(requestId, std::move(error));
+		handlers->fail(requestId, std::move(error));
 	}
 }
 

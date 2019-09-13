@@ -7,8 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "twidget.h"
 
-#include "application.h"
 #include "mainwindow.h"
+#include "core/application.h"
+#include "platform/platform_info.h"
+
+#include <QtGui/QWindow>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QFontDatabase>
 
 namespace Fonts {
 namespace {
@@ -22,7 +27,7 @@ bool ValidateFont(const QString &familyName, int flags = 0) {
 	checkFont.setStyleStrategy(QFont::PreferQuality);
 	auto realFamily = QFontInfo(checkFont).family();
 	if (realFamily.trimmed().compare(familyName, Qt::CaseInsensitive)) {
-		LOG(("Font Error: could not resolve '%1' font, got '%2' after feeding '%3'.").arg(familyName).arg(realFamily));
+		LOG(("Font Error: could not resolve '%1' font, got '%2'.").arg(familyName).arg(realFamily));
 		return false;
 	}
 
@@ -91,7 +96,19 @@ void Start() {
 			LOG(("Fonts Info: Using Segoe UI Semibold instead of Open Sans Semibold."));
 		}
 	}
-#endif // Q_OS_WIN
+	// Disable default fallbacks to Segoe UI, see:
+	// https://github.com/telegramdesktop/tdesktop/issues/5368
+	//
+	//QFont::insertSubstitution(qsl("Open Sans"), qsl("Segoe UI"));
+	//QFont::insertSubstitution(qsl("Open Sans Semibold"), qsl("Segoe UI Semibold"));
+#elif defined Q_OS_MAC // Q_OS_WIN
+	auto list = QStringList();
+	list.append(qsl(".SF NS Text"));
+	list.append(qsl("Helvetica Neue"));
+	list.append(qsl("Lucida Grande"));
+	QFont::insertSubstitutions(qsl("Open Sans"), list);
+	QFont::insertSubstitutions(qsl("Open Sans Semibold"), list);
+#endif // Q_OS_WIN || Q_OS_MAC
 }
 
 QString GetOverride(const QString &familyName) {
@@ -122,7 +139,7 @@ void CreateWidgetStateRecursive(not_null<QWidget*> target) {
 		if (!target->isWindow()) {
 			CreateWidgetStateRecursive(target->parentWidget());
 			WidgetCreator::Create(target);
-		} else if (!cIsSnowLeopard()) {
+		} else if (!Platform::IsMac() || Platform::IsMac10_7OrGreater()) {
 			WidgetCreator::Create(target);
 		}
 	}
@@ -136,12 +153,12 @@ void SendPendingEventsRecursive(QWidget *target, bool parentHiddenFlag) {
 	if (target->testAttribute(Qt::WA_PendingMoveEvent)) {
 		target->setAttribute(Qt::WA_PendingMoveEvent, false);
 		QMoveEvent e(target->pos(), QPoint());
-		QApplication::sendEvent(target, &e);
+		QCoreApplication::sendEvent(target, &e);
 	}
 	if (target->testAttribute(Qt::WA_PendingResizeEvent)) {
 		target->setAttribute(Qt::WA_PendingResizeEvent, false);
 		QResizeEvent e(target->size(), QSize());
-		QApplication::sendEvent(target, &e);
+		QCoreApplication::sendEvent(target, &e);
 	}
 
 	auto removeVisibleFlag = [&] {
@@ -175,6 +192,15 @@ void SendPendingMoveResizeEvents(not_null<QWidget*> target) {
 	SendPendingEventsRecursive(target, !target->isVisible());
 }
 
+void MarkDirtyOpaqueChildrenRecursive(not_null<QWidget*> target) {
+	target->resize(target->size()); // Calls setDirtyOpaqueRegion().
+	for (const auto child : target->children()) {
+		if (const auto widget = qobject_cast<QWidget*>(child)) {
+			MarkDirtyOpaqueChildrenRecursive(widget);
+		}
+	}
+}
+
 QPixmap GrabWidget(not_null<QWidget*> target, QRect rect, QColor bg) {
 	SendPendingMoveResizeEvents(target);
 	if (rect.isNull()) {
@@ -186,16 +212,15 @@ QPixmap GrabWidget(not_null<QWidget*> target, QRect rect, QColor bg) {
 	if (!target->testAttribute(Qt::WA_OpaquePaintEvent)) {
 		result.fill(bg);
 	}
-	target->render(
-		&result,
-		QPoint(0, 0),
-		rect,
-		QWidget::DrawChildren | QWidget::IgnoreMask);
+	{
+		QPainter p(&result);
+		RenderWidget(p, target, QPoint(), rect);
+	}
 	return result;
 }
 
 QImage GrabWidgetToImage(not_null<QWidget*> target, QRect rect, QColor bg) {
-	Ui::SendPendingMoveResizeEvents(target);
+	SendPendingMoveResizeEvents(target);
 	if (rect.isNull()) {
 		rect = target->rect();
 	}
@@ -207,18 +232,34 @@ QImage GrabWidgetToImage(not_null<QWidget*> target, QRect rect, QColor bg) {
 	if (!target->testAttribute(Qt::WA_OpaquePaintEvent)) {
 		result.fill(bg);
 	}
-	target->render(
-		&result,
-		QPoint(0, 0),
-		rect,
-		QWidget::DrawChildren | QWidget::IgnoreMask);
+	{
+		QPainter p(&result);
+		RenderWidget(p, target, QPoint(), rect);
+	}
 	return result;
+}
+
+void RenderWidget(
+		QPainter &painter,
+		not_null<QWidget*> source,
+		const QPoint &targetOffset,
+		const QRegion &sourceRegion,
+		QWidget::RenderFlags renderFlags) {
+	const auto visible = source->isVisible();
+	source->render(&painter, targetOffset, sourceRegion, renderFlags);
+	if (!visible) {
+		MarkDirtyOpaqueChildrenRecursive(source);
+	}
 }
 
 void ForceFullRepaint(not_null<QWidget*> widget) {
 	const auto refresher = std::make_unique<QWidget>(widget);
 	refresher->setGeometry(widget->rect());
 	refresher->show();
+}
+
+void PostponeCall(FnMut<void()> &&callable) {
+	Core::App().postponeCall(std::move(callable));
 }
 
 } // namespace Ui
@@ -237,7 +278,7 @@ void sendSynteticMouseEvent(QWidget *widget, QEvent::Type type, Qt::MouseButton 
 			, Qt::MouseEventSynthesizedByApplication
 #endif // OS_MAC_OLD
 		);
-		ev.setTimestamp(getms());
+		ev.setTimestamp(crl::now());
 		QGuiApplication::sendEvent(windowHandle, &ev);
 	}
 }

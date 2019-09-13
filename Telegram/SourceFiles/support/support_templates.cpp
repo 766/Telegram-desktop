@@ -7,8 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "support/support_templates.h"
 
+#include "ui/toast/toast.h"
 #include "data/data_session.h"
-#include "auth_session.h"
+#include "core/shortcuts.h"
+#include "main/main_session.h"
+
+#include <QtNetwork/QNetworkAccessManager>
 
 namespace Support {
 namespace details {
@@ -43,6 +47,10 @@ QString NormalizeQuestion(const QString &question) {
 		}
 	}
 	return result;
+}
+
+QString NormalizeKey(const QString &query) {
+	return TextUtilities::RemoveAccents(query.trimmed().toLower());
 }
 
 struct FileResult {
@@ -128,7 +136,10 @@ QString ReadByLineGetUrl(const QByteArray &blob, Callback &&callback) {
 		switch (state) {
 		case State::Keys:
 			if (!line.isEmpty()) {
-				question.keys.push_back(line);
+				question.originalKeys.push_back(line);
+				if (const auto norm = NormalizeKey(line); !norm.isEmpty()) {
+					question.normalizedKeys.push_back(norm);
+				}
 			}
 			break;
 		case State::Value:
@@ -266,9 +277,9 @@ TemplatesIndex ComputeIndex(const TemplatesData &data) {
 	auto uniqueFirst = std::map<QChar, base::flat_set<Id>>();
 	auto uniqueFull = std::map<Id, base::flat_set<Term>>();
 	const auto pushString = [&](
-		const Id &id,
-		const QString &string,
-		int weight) {
+			const Id &id,
+			const QString &string,
+			int weight) {
 		const auto list = TextUtilities::PrepareSearchWords(string);
 		for (const auto &word : list) {
 			uniqueFirst[word[0]].emplace(id);
@@ -278,7 +289,7 @@ TemplatesIndex ComputeIndex(const TemplatesData &data) {
 	for (const auto &[path, file] : data.files) {
 		for (const auto &[normalized, question] : file.questions) {
 			const auto id = std::make_pair(path, normalized);
-			for (const auto &key : question.keys) {
+			for (const auto &key : question.normalizedKeys) {
 				pushString(id, key, kWeightStep * kWeightStep);
 			}
 			pushString(id, question.question, kWeightStep);
@@ -335,7 +346,8 @@ void MoveKeys(TemplatesFile &to, const TemplatesFile &from) {
 	const auto &existing = from.questions;
 	for (auto &[normalized, question] : to.questions) {
 		if (const auto i = existing.find(normalized); i != end(existing)) {
-			question.keys = i->second.keys;
+			question.originalKeys = i->second.originalKeys;
+			question.normalizedKeys = i->second.normalizedKeys;
 		}
 	}
 }
@@ -347,7 +359,7 @@ Delta ComputeDelta(const TemplatesFile &was, const TemplatesFile &now) {
 		if (i == end(was.questions)) {
 			result.added.push_back(&question);
 		} else {
-			result.keys.emplace(normalized, i->second.keys);
+			result.keys.emplace(normalized, i->second.originalKeys);
 			if (i->second.value != question.value) {
 				result.changed.push_back(&question);
 			}
@@ -368,7 +380,7 @@ QString FormatUpdateNotification(const QString &path, const Delta &delta) {
 		for (const auto question : delta.added) {
 			result += qsl("Q: %1\nK: %2\nA: %3\n\n"
 			).arg(question->question
-			).arg(question->keys.join(qsl(", "))
+			).arg(question->originalKeys.join(qsl(", "))
 			).arg(question->value.trimmed());
 		}
 	}
@@ -420,16 +432,12 @@ int CountMaxKeyLength(const TemplatesData &data) {
 	auto result = 0;
 	for (const auto &[path, file] : data.files) {
 		for (const auto &[normalized, question] : file.questions) {
-			for (const auto &key : question.keys) {
+			for (const auto &key : question.normalizedKeys) {
 				accumulate_max(result, key.size());
 			}
 		}
 	}
 	return result;
-}
-
-QString NormalizeKey(const QString &query) {
-	return TextUtilities::RemoveAccents(query.trimmed().toLower());
 }
 
 } // namespace
@@ -442,42 +450,57 @@ struct Templates::Updates {
 	std::map<QString, QNetworkReply*> requests;
 };
 
-Templates::Templates(not_null<AuthSession*> session) : _session(session) {
-	reload();
+Templates::Templates(not_null<Main::Session*> session) : _session(session) {
+	load();
+	Shortcuts::Requests(
+	) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
+		using Command = Shortcuts::Command;
+		request->check(
+			Command::SupportReloadTemplates
+		) && request->handle([=] {
+			reload();
+			return true;
+		});
+	}, _lifetime);
 }
 
 void Templates::reload() {
+	_reloadToastSubscription = errors(
+	) | rpl::start_with_next([=](QStringList errors) {
+		Ui::Toast::Show(errors.isEmpty()
+			? "Templates reloaded!"
+			: ("Errors:\n\n" + errors.join("\n\n")));
+	});
+
+	load();
+}
+
+void Templates::load() {
 	if (_reloadAfterRead) {
 		return;
-	} else if (_reading.alive() || _updates) {
+	} else if (_reading || _updates) {
 		_reloadAfterRead = true;
 		return;
 	}
 
-	auto[left, right] = base::make_binary_guard();
-	_reading = std::move(left);
-	crl::async([=, guard = std::move(right)]() mutable {
+	crl::async([=, guard = _reading.make_guard()]() mutable {
 		auto result = ReadFiles(cWorkingDir() + "TEMPLATES");
 		result.index = ComputeIndex(result.result);
-		crl::on_main([
+		crl::on_main(std::move(guard), [
 			=,
-				result = std::move(result),
-				guard = std::move(guard)
+			result = std::move(result)
 		]() mutable {
-				if (!guard.alive()) {
-					return;
+			setData(std::move(result.result));
+			_index = std::move(result.index);
+			_errors.fire(std::move(result.errors));
+			crl::on_main(this, [=] {
+				if (base::take(_reloadAfterRead)) {
+					reload();
+				} else {
+					update();
 				}
-				setData(std::move(result.result));
-				_index = std::move(result.index);
-				_errors.fire(std::move(result.errors));
-				crl::on_main(this, [=] {
-					if (base::take(_reloadAfterRead)) {
-						reload();
-					} else {
-						update();
-					}
-				});
 			});
+		});
 	});
 }
 
@@ -601,7 +624,7 @@ auto Templates::matchExact(QString query) const
 
 	for (const auto &[path, file] : _data.files) {
 		for (const auto &[normalized, question] : file.questions) {
-			for (const auto &key : question.keys) {
+			for (const auto &key : question.normalizedKeys) {
 				if (key == query) {
 					return QuestionByKey{ question, key };
 				}
@@ -627,10 +650,10 @@ auto Templates::matchFromEnd(QString query) const
 	auto result = std::optional<QuestionByKey>();
 	for (const auto &[path, file] : _data.files) {
 		for (const auto &[normalized, question] : file.questions) {
-			for (const auto &key : question.keys) {
+			for (const auto &key : question.normalizedKeys) {
 				if (key.size() <= queries.size()
 					&& queries[key.size() - 1] == key
-					&& (!result || result->key.size() < key.size())) {
+					&& (!result || result->key.size() <= key.size())) {
 					result = QuestionByKey{ question, key };
 				}
 			}
@@ -661,7 +684,6 @@ auto Templates::query(const QString &text) const -> std::vector<Question> {
 		return _data.files.at(id.first).questions.at(id.second);
 	};
 
-	using Pair = std::pair<Question, int>;
 	const auto computeWeight = [&](const Id &id) {
 		auto result = 0;
 		const auto full = _index.full.find(id);
@@ -690,19 +712,31 @@ auto Templates::query(const QString &text) const -> std::vector<Question> {
 		}
 		return result;
 	};
+	using Pair = std::pair<Id, int>;
 	const auto pairById = [&](const Id &id) {
-		return std::make_pair(questionById(id), computeWeight(id));
+		return std::make_pair(id, computeWeight(id));
+	};
+	const auto sorter = [](const Pair &a, const Pair &b) {
+		// weight DESC filename DESC question ASC
+		if (a.second > b.second) {
+			return true;
+		} else if (a.second < b.second) {
+			return false;
+		} else if (a.first.first > b.first.first) {
+			return true;
+		} else if (a.first.first < b.first.first) {
+			return false;
+		} else {
+			return (a.first.second < b.first.second);
+		}
 	};
 	const auto good = narrowed->second | ranges::view::transform(
 		pairById
 	) | ranges::view::filter([](const Pair &pair) {
 		return pair.second > 0;
-	}) | ranges::to_vector | ranges::action::sort(
-		std::greater<>(),
-		[](const Pair &pair) { return pair.second; }
-	);
-	return good | ranges::view::transform([](const Pair &pair) {
-		return pair.first;
+	}) | ranges::to_vector | ranges::action::stable_sort(sorter);
+	return good | ranges::view::transform([&](const Pair &pair) {
+		return questionById(pair.first);
 	}) | ranges::view::take(kQueryLimit) | ranges::to_vector;
 }
 

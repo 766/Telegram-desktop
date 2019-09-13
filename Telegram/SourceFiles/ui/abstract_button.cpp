@@ -9,7 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <rpl/filter.h>
 #include <rpl/mappers.h>
-#include "messenger.h"
+#include "core/application.h"
 
 namespace Ui {
 
@@ -66,14 +66,19 @@ void AbstractButton::mouseMoveEvent(QMouseEvent *e) {
 
 void AbstractButton::mouseReleaseEvent(QMouseEvent *e) {
 	if (_state & StateFlag::Down) {
-		auto was = _state;
+		const auto was = _state;
 		_state &= ~State(StateFlag::Down);
+
+		auto weak = make_weak(this);
 		onStateChanged(was, StateChangeSource::ByPress);
+		if (!weak) {
+			return;
+		}
+
 		if (was & StateFlag::Over) {
 			_modifiers = e->modifiers();
-			auto weak = make_weak(this);
-			if (_clickedCallback) {
-				_clickedCallback();
+			if (const auto callback = _clickedCallback) {
+				callback();
 			} else {
 				emit clicked();
 			}
@@ -97,12 +102,12 @@ void AbstractButton::setOver(bool over, StateChangeSource source) {
 	if (over && !(_state & StateFlag::Over)) {
 		auto was = _state;
 		_state |= StateFlag::Over;
-		Messenger::Instance().registerLeaveSubscription(this);
+		Core::App().registerLeaveSubscription(this);
 		onStateChanged(was, source);
 	} else if (!over && (_state & StateFlag::Over)) {
 		auto was = _state;
 		_state &= ~State(StateFlag::Over);
-		Messenger::Instance().unregisterLeaveSubscription(this);
+		Core::App().unregisterLeaveSubscription(this);
 		onStateChanged(was, source);
 	}
 	updateCursor();

@@ -9,8 +9,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/sender.h"
 #include "ui/rp_widget.h"
+#include "ui/effects/animations.h"
 #include "window/window_lock_widgets.h"
 #include "core/core_cloud_password.h"
+
+namespace Main {
+class Account;
+} // namespace Main
 
 namespace Ui {
 class IconButton;
@@ -24,7 +29,7 @@ class FadeWrap;
 } // namespace Ui
 
 namespace Window {
-class ConnectingWidget;
+class ConnectionState;
 } // namespace Window
 
 namespace Intro {
@@ -33,7 +38,7 @@ class Widget : public Ui::RpWidget, private MTP::Sender, private base::Subscribe
 	Q_OBJECT
 
 public:
-	Widget(QWidget *parent);
+	Widget(QWidget *parent, not_null<Main::Account*> account);
 
 	void showAnimated(const QPixmap &bgAnimCache, bool back = false);
 
@@ -58,7 +63,6 @@ public:
 		QString country;
 		QString phone;
 		QByteArray phoneHash;
-		bool phoneIsRegistered = false;
 
 		enum class CallStatus {
 			Waiting,
@@ -69,7 +73,6 @@ public:
 		CallStatus callStatus = CallStatus::Disabled;
 		int callTimeout = 0;
 
-		QString code;
 		int codeLength = 5;
 		bool codeByTelegram = false;
 
@@ -89,9 +92,17 @@ public:
 		Forward,
 		Replace,
 	};
-	class Step : public TWidget, public RPCSender, protected base::Subscriber {
+	class Step : public Ui::RpWidget, public RPCSender, protected base::Subscriber {
 	public:
-		Step(QWidget *parent, Data *data, bool hasCover = false);
+		Step(
+			QWidget *parent,
+			not_null<Main::Account*> account,
+			not_null<Data*> data,
+			bool hasCover = false);
+
+		Main::Account &account() const {
+			return *_account;
+		}
 
 		virtual void finishInit() {
 		}
@@ -119,16 +130,16 @@ public:
 		virtual void finished();
 
 		virtual void submit() = 0;
-		virtual QString nextButtonText() const;
+		virtual rpl::producer<QString> nextButtonText() const;
 
 		int contentLeft() const;
 		int contentTop() const;
 
 		void setErrorCentered(bool centered);
 		void setErrorBelowLink(bool below);
-		void showError(Fn<QString()> textFactory);
+		void showError(rpl::producer<QString> text);
 		void hideError() {
-			showError(Fn<QString()>());
+			showError(rpl::single(QString()));
 		}
 
 		~Step();
@@ -137,8 +148,10 @@ public:
 		void paintEvent(QPaintEvent *e) override;
 		void resizeEvent(QResizeEvent *e) override;
 
-		void setTitleText(Fn<QString()> richTitleTextFactory);
-		void setDescriptionText(Fn<QString()> richDescriptionTextFactory);
+		void setTitleText(rpl::producer<QString> titleText);
+		void setDescriptionText(rpl::producer<QString> descriptionText);
+		void setDescriptionText(
+			rpl::producer<TextWithEntities> richDescriptionText);
 		bool paintAnimated(Painter &p, QRect clip);
 
 		void fillSentCodeData(const MTPDauth_sentCode &type);
@@ -146,19 +159,33 @@ public:
 		void showDescription();
 		void hideDescription();
 
-		Data *getData() const {
+		not_null<Data*> getData() const {
 			return _data;
 		}
 		void finish(const MTPUser &user, QImage &&photo = QImage());
 
 		void goBack() {
-			if (_goCallback) _goCallback(nullptr, Direction::Back);
+			if (_goCallback) {
+				_goCallback(nullptr, Direction::Back);
+			}
 		}
-		void goNext(Step *step) {
-			if (_goCallback) _goCallback(step, Direction::Forward);
+
+		template <typename StepType>
+		void goNext() {
+			if (_goCallback) {
+				_goCallback(
+					new StepType(parentWidget(), _account, _data),
+					Direction::Forward);
+			}
 		}
-		void goReplace(Step *step) {
-			if (_goCallback) _goCallback(step, Direction::Replace);
+
+		template <typename StepType>
+		void goReplace() {
+			if (_goCallback) {
+				_goCallback(
+					new StepType(parentWidget(), _account, _data),
+					Direction::Replace);
+			}
 		}
 		void showResetButton() {
 			if (_showResetCallback) _showResetCallback();
@@ -188,10 +215,7 @@ public:
 		};
 		void updateLabelsPosition();
 		void paintContentSnapshot(Painter &p, const QPixmap &snapshot, float64 alpha, float64 howMuchHidden);
-		void refreshError();
-		void refreshTitle();
-		void refreshDescription();
-		void refreshLang();
+		void refreshError(const QString &text);
 
 		CoverAnimation prepareCoverAnimation(Step *step);
 		QPixmap prepareContentSnapshot();
@@ -201,25 +225,26 @@ public:
 		void prepareCoverMask();
 		void paintCover(Painter &p, int top);
 
-		Data *_data = nullptr;
+		const not_null<Main::Account*> _account;
+		const not_null<Data*> _data;
+
 		bool _hasCover = false;
 		Fn<void(Step *step, Direction direction)> _goCallback;
 		Fn<void()> _showResetCallback;
 		Fn<void()> _showTermsCallback;
-		Fn<void(
-			Fn<void()> callback)> _acceptTermsCallback;
+		Fn<void(Fn<void()> callback)> _acceptTermsCallback;
 
+		rpl::variable<QString> _titleText;
 		object_ptr<Ui::FlatLabel> _title;
-		Fn<QString()> _titleTextFactory;
+		rpl::variable<TextWithEntities> _descriptionText;
 		object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _description;
-		Fn<QString()> _descriptionTextFactory;
 
 		bool _errorCentered = false;
 		bool _errorBelowLink = false;
-		Fn<QString()> _errorTextFactory;
+		rpl::variable<QString> _errorText;
 		object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _error = { nullptr };
 
-		Animation _a_show;
+		Ui::Animations::Simple _a_show;
 		CoverAnimation _coverAnimation;
 		std::unique_ptr<Ui::SlideAnimation> _slideAnimation;
 		QPixmap _coverMask;
@@ -233,7 +258,7 @@ private:
 	void createLanguageLink();
 
 	void updateControlsGeometry();
-	Data *getData() {
+	not_null<Data*> getData() {
 		return &_data;
 	}
 
@@ -260,7 +285,9 @@ private:
 	void getNearestDC();
 	void showTerms(Fn<void()> callback);
 
-	Animation _a_show;
+	not_null<Main::Account*> _account;
+
+	Ui::Animations::Simple _a_show;
 	bool _showBack = false;
 	QPixmap _cacheUnder, _cacheOver;
 
@@ -268,7 +295,7 @@ private:
 
 	Data _data;
 
-	Animation _coverShownAnimation;
+	Ui::Animations::Simple _coverShownAnimation;
 	int _nextTopFrom = 0;
 	int _controlsTopFrom = 0;
 
@@ -281,7 +308,7 @@ private:
 	object_ptr<Ui::FadeWrap<Ui::RoundButton>> _resetAccount = { nullptr };
 	object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _terms = { nullptr };
 
-	base::unique_qptr<Window::ConnectingWidget> _connecting;
+	std::unique_ptr<Window::ConnectionState> _connecting;
 
 	mtpRequestId _resetRequest = 0;
 

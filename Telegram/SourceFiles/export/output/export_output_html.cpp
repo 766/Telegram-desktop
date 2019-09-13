@@ -283,6 +283,10 @@ QByteArray FormatText(
 			"onclick=\"return ShowCashtag("
 			+ SerializeString('"' + text.mid(1) + '"')
 			+ ")\">" + text + "</a>";
+		case Type::Underline: return "<u>" + text + "</u>";
+		case Type::Strike: return "<s>" + text + "</s>";
+		case Type::Blockquote:
+			return "<blockquote>" + text + "</blockquote>";
 		}
 		Unexpected("Type in text entities serialization.");
 	}) | ranges::to_vector);
@@ -513,6 +517,8 @@ struct HtmlWriter::MessageInfo {
 	int32 fromId = 0;
 	TimeId date = 0;
 	Data::PeerId forwardedFromId = 0;
+	QString forwardedFromName;
+	bool forwarded = false;
 	TimeId forwardedDate = 0;
 };
 
@@ -621,8 +627,10 @@ private:
 	[[nodiscard]] QByteArray pushPhotoMedia(
 		const Data::Photo &data,
 		const QString &basePath);
+	[[nodiscard]] QByteArray pushPoll(const Data::Poll &data);
 
 	File _file;
+	QByteArray _composedStart;
 	bool _closed = false;
 	QByteArray _base;
 	Context _context;
@@ -643,6 +651,20 @@ void FillUserpicNames(UserpicData &data, const Data::Peer &peer) {
 		data.lastName = peer.user()->info.lastName;
 	} else if (peer.chat()) {
 		data.firstName = peer.name();
+	}
+}
+
+void FillUserpicNames(UserpicData &data, const QByteArray &full) {
+	const auto names = full.split(' ');
+	data.firstName = names[0];
+	for (auto i = 1; i != names.size(); ++i) {
+		if (names[i].isEmpty()) {
+			continue;
+		}
+		if (!data.lastName.isEmpty()) {
+			data.lastName.append(' ');
+		}
+		data.lastName.append(names[i]);
 	}
 }
 
@@ -676,6 +698,8 @@ HtmlWriter::Wrap::Wrap(
 	const auto left = path.mid(base.size());
 	const auto nesting = ranges::count(left, '/');
 	_base = QString("../").repeated(nesting).toUtf8();
+
+	_composedStart = composeStart();
 }
 
 bool HtmlWriter::Wrap::empty() const {
@@ -836,7 +860,7 @@ Result HtmlWriter::Wrap::writeBlock(const QByteArray &block) {
 		if (block.isEmpty()) {
 			return _file.writeBlock(block);
 		} else if (_file.empty()) {
-			return _file.writeBlock(composeStart() + block);
+			return _file.writeBlock(_composedStart + block);
 		}
 		return _file.writeBlock(block);
 	}();
@@ -944,7 +968,9 @@ auto HtmlWriter::Wrap::pushMessage(
 	info.fromId = message.fromId;
 	info.date = message.date;
 	info.forwardedFromId = message.forwardedFromId;
+	info.forwardedFromName = message.forwardedFromName;
 	info.forwardedDate = message.forwardedDate;
+	info.forwarded = message.forwarded;
 	if (message.media.content.is<UnsupportedMedia>()) {
 		return { info, pushServiceMessage(
 			message.id,
@@ -1058,6 +1084,10 @@ auto HtmlWriter::Wrap::pushMessage(
 		}
 		return "You have sent the following documents: "
 			+ SerializeList(list);
+	}, [&](const ActionContactSignUp &data) {
+		return serviceFrom + " joined Telegram";
+	}, [&](const ActionPhoneNumberRequest &data) {
+		return serviceFrom + " requested your phone number";
 	}, [](std::nullopt_t) { return QByteArray(); });
 
 	if (!serviceText.isEmpty()) {
@@ -1116,19 +1146,24 @@ auto HtmlWriter::Wrap::pushMessage(
 		block.append(pushDiv("from_name"));
 		block.append(SerializeString(
 			ComposeName(userpic, "Deleted Account")));
-		if (!via.isEmpty() && !message.forwardedFromId) {
+		if (!via.isEmpty() && !message.forwarded) {
 			block.append(" via @" + via);
 		}
 		block.append(popTag());
 	}
-	if (message.forwardedFromId) {
+	if (message.forwarded) {
 		auto forwardedUserpic = UserpicData();
-		forwardedUserpic.colorIndex = PeerColorIndex(
-			BarePeerId(message.forwardedFromId));
+		forwardedUserpic.colorIndex = message.forwardedFromId
+			? PeerColorIndex(BarePeerId(message.forwardedFromId))
+			: PeerColorIndex(message.id);
 		forwardedUserpic.pixelSize = kHistoryUserpicSize;
-		FillUserpicNames(
-			forwardedUserpic,
-			peers.peer(message.forwardedFromId));
+		if (message.forwardedFromId) {
+			FillUserpicNames(
+				forwardedUserpic,
+				peers.peer(message.forwardedFromId));
+		} else {
+			FillUserpicNames(forwardedUserpic, message.forwardedFromName);
+		}
 
 		const auto forwardedWrap = forwardedNeedsWrap(message, previous);
 		if (forwardedWrap) {
@@ -1173,7 +1208,7 @@ auto HtmlWriter::Wrap::pushMessage(
 		block.append(SerializeString(message.signature));
 		block.append(popTag());
 	}
-	if (message.forwardedFromId) {
+	if (message.forwarded) {
 		block.append(popTag());
 	}
 	block.append(popTag());
@@ -1194,10 +1229,12 @@ bool HtmlWriter::Wrap::messageNeedsWrap(
 	} else if (QDateTime::fromTime_t(previous->date).date()
 		!= QDateTime::fromTime_t(message.date).date()) {
 		return true;
-	} else if (!message.forwardedFromId != !previous->forwardedFromId) {
+	} else if (message.forwarded != previous->forwarded) {
 		return true;
 	} else if (std::abs(message.date - previous->date)
-		> (message.forwardedFromId ? 1 : kJoinWithinSeconds)) {
+		> ((message.forwardedFromId || !message.forwardedFromName.isEmpty())
+			? 1
+			: kJoinWithinSeconds)) {
 		return true;
 	}
 	return false;
@@ -1230,6 +1267,8 @@ QByteArray HtmlWriter::Wrap::pushMedia(
 	} else if (const auto photo = base::get_if<Data::Photo>(&content)) {
 		Assert(!message.media.ttl);
 		return pushPhotoMedia(*photo, basePath);
+	} else if (const auto poll = base::get_if<Data::Poll>(&content)) {
+		return pushPoll(*poll);
 	}
 	Assert(!content.has_value());
 	return QByteArray();
@@ -1305,7 +1344,10 @@ QByteArray HtmlWriter::Wrap::pushStickerMedia(
 		generic.title = "Sticker";
 		generic.status = data.stickerEmoji;
 		if (data.file.relativePath.isEmpty()) {
-			generic.status += ", " + FormatFileSize(data.file.size);
+			if (!generic.status.isEmpty()) {
+				generic.status += ", ";
+			}
+			generic.status += FormatFileSize(data.file.size);
 		} else {
 			generic.link = data.file.relativePath;
 		}
@@ -1501,6 +1543,54 @@ QByteArray HtmlWriter::Wrap::pushPhotoMedia(
 	return result;
 }
 
+QByteArray HtmlWriter::Wrap::pushPoll(const Data::Poll &data) {
+	using namespace Data;
+
+	auto result = pushDiv("media_wrap clearfix");
+	result.append(pushDiv("media_poll"));
+	result.append(pushDiv("question bold"));
+	result.append(SerializeString(data.question));
+	result.append(popTag());
+	result.append(pushDiv("details"));
+	if (data.closed) {
+		result.append(SerializeString("Final results"));
+	} else {
+		result.append(SerializeString("Anonymous poll"));
+	}
+	result.append(popTag());
+	const auto votes = [](int count) {
+		if (count > 1) {
+			return NumberToString(count) + " votes";
+		} else if (count > 0) {
+			return NumberToString(count) + " vote";
+		}
+		return QByteArray("No votes");
+	};
+	const auto details = [&](const Poll::Answer &answer) {
+		if (!answer.votes) {
+			return QByteArray("");
+		} else if (!answer.my) {
+			return " <span class=\"details\">"
+				+ votes(answer.votes)
+				+ "</span>";
+		}
+		return " <span class=\"details\">"
+			+ votes(answer.votes)
+			+ ", chosen vote</span>";
+	};
+	for (const auto &answer : data.answers) {
+		result.append(pushDiv("answer"));
+		result.append("- " + SerializeString(answer.text) + details(answer));
+		result.append(popTag());
+	}
+	result.append(pushDiv("total details	"));
+	result.append(votes(data.totalVotes));
+	result.append(popTag());
+	result.append(popTag());
+	result.append(popTag());
+	return result;
+}
+
 MediaData HtmlWriter::Wrap::prepareMediaData(
 		const Data::Message &message,
 		const QString &basePath,
@@ -1656,6 +1746,7 @@ MediaData HtmlWriter::Wrap::prepareMediaData(
 		result.title = data.title;
 		result.description = data.description;
 		result.status = Data::FormatMoneyAmount(data.amount, data.currency);
+	}, [](const Poll &data) {
 	}, [](const UnsupportedMedia &data) {
 		Unexpected("Unsupported message.");
 	}, [](std::nullopt_t) {});
@@ -1665,11 +1756,12 @@ MediaData HtmlWriter::Wrap::prepareMediaData(
 bool HtmlWriter::Wrap::forwardedNeedsWrap(
 		const Data::Message &message,
 		const MessageInfo *previous) const {
-	Expects(message.forwardedFromId != 0);
+	Expects(message.forwarded);
 
 	if (messageNeedsWrap(message, previous)) {
 		return true;
-	} else if (message.forwardedFromId != previous->forwardedFromId) {
+	} else if (!message.forwardedFromId
+		|| message.forwardedFromId != previous->forwardedFromId) {
 		return true;
 	} else if (Data::IsChatPeerId(message.forwardedFromId)) {
 		return true;

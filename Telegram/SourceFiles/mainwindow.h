@@ -9,7 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "platform/platform_specific.h"
 #include "platform/platform_main_window.h"
-#include "core/single_timer.h"
+#include "base/unique_qptr.h"
 
 class MainWidget;
 class BoxContent;
@@ -44,7 +44,7 @@ class MainWindow : public Platform::MainWindow {
 	Q_OBJECT
 
 public:
-	MainWindow();
+	explicit MainWindow(not_null<Window::Controller*> controller);
 	~MainWindow();
 
 	void firstShow();
@@ -66,7 +66,6 @@ public:
 	void activate();
 
 	void noIntro(Intro::Widget *was);
-	void layerHidden(not_null<Window::LayerStackWidget*> layer);
 	bool takeThirdSectionFromLayer();
 
 	void checkHistoryActivation();
@@ -110,13 +109,13 @@ public:
 	void ui_hideSettingsAndLayer(anim::type animated);
 	void ui_removeLayerBlackout();
 	bool ui_isLayerShown();
-	void ui_showMediaPreview(
+	void showMediaPreview(
 		Data::FileOrigin origin,
 		not_null<DocumentData*> document);
-	void ui_showMediaPreview(
+	void showMediaPreview(
 		Data::FileOrigin origin,
 		not_null<PhotoData*> photo);
-	void ui_hideMediaPreview();
+	void hideMediaPreview();
 
 protected:
 	bool eventFilter(QObject *o, QEvent *e) override;
@@ -134,7 +133,6 @@ public slots:
 
 	void quitFromTray();
 	void showFromTray(QSystemTrayIcon::ActivationReason reason = QSystemTrayIcon::Unknown);
-	void toggleTray(QSystemTrayIcon::ActivationReason reason = QSystemTrayIcon::Unknown);
 	void toggleDisplayNotifyFromTray();
 
 	void onClearFinished(int task, void *manager);
@@ -148,13 +146,15 @@ public slots:
 signals:
 	void tempDirCleared(int task);
 	void tempDirClearFailed(int task);
-	void checkNewAuthorization();
 
 private:
 	[[nodiscard]] bool skipTrayClick() const;
 
+	void handleTrayIconActication(
+		QSystemTrayIcon::ActivationReason reason) override;
+
 	void ensureLayerCreated();
-	void destroyLayerDelayed();
+	void destroyLayer();
 
 	void themeUpdated(const Window::Theme::BackgroundUpdate &data);
 
@@ -163,12 +163,12 @@ private:
 	void placeSmallCounter(QImage &img, int size, int count, style::color bg, const QPoint &shift, style::color color) override;
 	QImage icon16, icon32, icon64, iconbig16, iconbig32, iconbig64;
 
-	TimeMs _lastTrayClickTime = 0;
+	crl::time _lastTrayClickTime = 0;
 
 	object_ptr<Window::PasscodeLockWidget> _passcodeLock = { nullptr };
 	object_ptr<Intro::Widget> _intro = { nullptr };
 	object_ptr<MainWidget> _main = { nullptr };
-	object_ptr<Window::LayerStackWidget> _layer = { nullptr };
+	base::unique_qptr<Window::LayerStackWidget> _layer;
 	object_ptr<MediaPreviewWidget> _mediaPreview = { nullptr };
 
 	object_ptr<Window::Theme::WarningWidget> _testingThemeWarning = { nullptr };

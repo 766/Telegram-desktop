@@ -13,17 +13,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/text/text_utilities.h" // Ui::Text::ToUpper
 #include "boxes/connection_box.h"
 #include "boxes/about_box.h"
 #include "boxes/confirm_box.h"
 #include "info/profile/info_profile_button.h"
-#include "info/profile/info_profile_values.h"
 #include "platform/platform_specific.h"
+#include "platform/platform_info.h"
+#include "window/window_session_controller.h"
 #include "lang/lang_keys.h"
 #include "core/update_checker.h"
+#include "core/application.h"
 #include "storage/localstorage.h"
 #include "data/data_session.h"
-#include "auth_session.h"
+#include "main/main_session.h"
 #include "layout.h"
 #include "styles/style_settings.h"
 
@@ -43,19 +46,19 @@ void SetupConnectionType(not_null<Ui::VerticalLayout*> container) {
 #ifndef TDESKTOP_DISABLE_NETWORK_PROXY
 	const auto connectionType = [] {
 		const auto transport = MTP::dctransport();
-		if (!Global::UseProxy()) {
+		if (Global::ProxySettings() != ProxyData::Settings::Enabled) {
 			return transport.isEmpty()
-				? lang(lng_connection_auto_connecting)
-				: lng_connection_auto(lt_transport, transport);
+				? tr::lng_connection_auto_connecting(tr::now)
+				: tr::lng_connection_auto(tr::now, lt_transport, transport);
 		} else {
 			return transport.isEmpty()
-				? lang(lng_connection_proxy_connecting)
-				: lng_connection_proxy(lt_transport, transport);
+				? tr::lng_connection_proxy_connecting(tr::now)
+				: tr::lng_connection_proxy(tr::now, lt_transport, transport);
 		}
 	};
 	const auto button = AddButtonWithLabel(
 		container,
-		lng_settings_connection_type,
+		tr::lng_settings_connection_type(),
 		rpl::single(
 			rpl::empty_value()
 		) | rpl::then(base::ObservableViewer(
@@ -77,18 +80,17 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 		return;
 	}
 
-	const auto texts = Ui::AttachAsChild(
-		container,
-		rpl::event_stream<QString>());
-	const auto downloading = Ui::AttachAsChild(
-		container,
-		rpl::event_stream<bool>());
-	const auto version = lng_settings_current_version(
+	const auto texts = Ui::CreateChild<rpl::event_stream<QString>>(
+		container.get());
+	const auto downloading = Ui::CreateChild<rpl::event_stream<bool>>(
+		container.get());
+	const auto version = tr::lng_settings_current_version(
+		tr::now,
 		lt_version,
 		currentVersionText());
 	const auto toggle = AddButton(
 		container,
-		lng_settings_update_automatically,
+		tr::lng_settings_update_automatically(),
 		st::settingsUpdateToggle);
 	const auto label = Ui::CreateChild<Ui::FlatLabel>(
 		toggle.get(),
@@ -102,16 +104,16 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 	const auto inner = options->entity();
 	const auto install = cAlphaVersion() ? nullptr : AddButton(
 		inner,
-		lng_settings_install_beta,
+		tr::lng_settings_install_beta(),
 		st::settingsButton).get();
 
 	const auto check = AddButton(
 		inner,
-		lng_settings_check_now,
+		tr::lng_settings_check_now(),
 		st::settingsButton);
 	const auto update = Ui::CreateChild<Button>(
 		check.get(),
-		Lang::Viewer(lng_update_telegram) | Info::Profile::ToUpperValue(),
+		tr::lng_update_telegram() | Ui::Text::ToUpper(),
 		st::settingsUpdate);
 	update->hide();
 	check->widthValue() | rpl::start_with_next([=](int width) {
@@ -130,7 +132,8 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 	label->setAttribute(Qt::WA_TransparentForMouseEvents);
 
 	const auto showDownloadProgress = [=](int64 ready, int64 total) {
-		texts->fire(lng_settings_downloading_update(
+		texts->fire(tr::lng_settings_downloading_update(
+			tr::now,
 			lt_progress,
 			formatDownloadText(ready, total)));
 		downloading->fire(true);
@@ -143,7 +146,7 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 			showDownloadProgress(checker.already(), checker.size());
 			break;
 		case State::Ready:
-			texts->fire(lang(lng_settings_update_ready));
+			texts->fire(tr::lng_settings_update_ready(tr::now));
 			update->show();
 			break;
 		default:
@@ -165,8 +168,8 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 			checker.start();
 		} else {
 			checker.stop();
+			setDefaultStatus(checker);
 		}
-		setDefaultStatus(checker);
 	}, toggle->lifetime());
 
 	if (install) {
@@ -176,7 +179,7 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 			return (toggled != cInstallBetaVersion());
 		}) | rpl::start_with_next([=](bool toggled) {
 			cSetInstallBetaVersion(toggled);
-			Sandbox::WriteInstallBetaVersionsSetting();
+			Core::App().writeInstallBetaVersionsSetting();
 
 			Core::UpdateChecker checker;
 			checker.stop();
@@ -184,7 +187,6 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 				cSetLastUpdateCheck(0);
 			}
 			checker.start();
-			setDefaultStatus(checker);
 		}, toggle->lifetime());
 	}
 
@@ -199,12 +201,12 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 
 	checker.checking() | rpl::start_with_next([=] {
 		options->setAttribute(Qt::WA_TransparentForMouseEvents);
-		texts->fire(lang(lng_settings_update_checking));
+		texts->fire(tr::lng_settings_update_checking(tr::now));
 		downloading->fire(false);
 	}, options->lifetime());
 	checker.isLatest() | rpl::start_with_next([=] {
 		options->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-		texts->fire(lang(lng_settings_latest_installed));
+		texts->fire(tr::lng_settings_latest_installed(tr::now));
 		downloading->fire(false);
 	}, options->lifetime());
 	checker.progress(
@@ -213,12 +215,12 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 	}, options->lifetime());
 	checker.failed() | rpl::start_with_next([=] {
 		options->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-		texts->fire(lang(lng_settings_update_fail));
+		texts->fire(tr::lng_settings_update_fail(tr::now));
 		downloading->fire(false);
 	}, options->lifetime());
 	checker.ready() | rpl::start_with_next([=] {
 		options->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-		texts->fire(lang(lng_settings_update_ready));
+		texts->fire(tr::lng_settings_update_ready(tr::now));
 		update->show();
 		downloading->fire(false);
 	}, options->lifetime());
@@ -240,23 +242,23 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 }
 
 bool HasTray() {
-	return cSupportTray() || (cPlatform() == dbipWindows);
+	return cSupportTray() || Platform::IsWindows();
 }
 
 void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
-	const auto checkbox = [&](LangKey label, bool checked) {
+	const auto checkbox = [&](const QString &label, bool checked) {
 		return object_ptr<Ui::Checkbox>(
 			container,
-			lang(label),
+			label,
 			checked,
 			st::settingsCheckbox);
 	};
-	const auto addCheckbox = [&](LangKey label, bool checked) {
+	const auto addCheckbox = [&](const QString &label, bool checked) {
 		return container->add(
 			checkbox(label, checked),
 			st::settingsCheckboxPadding);
 	};
-	const auto addSlidingCheckbox = [&](LangKey label, bool checked) {
+	const auto addSlidingCheckbox = [&](const QString &label, bool checked) {
 		return container->add(
 			object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
 				container,
@@ -270,7 +272,7 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 			|| (workMode == dbiwmWindowAndTray);
 	};
 	const auto tray = addCheckbox(
-		lng_settings_workmode_tray,
+		tr::lng_settings_workmode_tray(tr::now),
 		trayEnabled());
 
 	const auto taskbarEnabled = [] {
@@ -278,9 +280,9 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 		return (workMode == dbiwmWindowOnly)
 			|| (workMode == dbiwmWindowAndTray);
 	};
-	const auto taskbar = (cPlatform() == dbipWindows)
+	const auto taskbar = Platform::IsWindows()
 		? addCheckbox(
-			lng_settings_workmode_window,
+			tr::lng_settings_workmode_window(tr::now),
 			taskbarEnabled())
 		: nullptr;
 
@@ -298,8 +300,7 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 		Local::writeSettings();
 	};
 
-	base::ObservableViewer(
-		tray->checkedChanged
+	tray->checkedChanges(
 	) | rpl::filter([=](bool checked) {
 		return (checked != trayEnabled());
 	}) | rpl::start_with_next([=](bool checked) {
@@ -311,8 +312,7 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 	}, tray->lifetime());
 
 	if (taskbar) {
-		base::ObservableViewer(
-			taskbar->checkedChanged
+		taskbar->checkedChanges(
 		) | rpl::filter([=](bool checked) {
 			return (checked != taskbarEnabled());
 		}) | rpl::start_with_next([=](bool checked) {
@@ -325,23 +325,22 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 	}
 
 #ifndef OS_WIN_STORE
-	if (cPlatform() == dbipWindows) {
+	if (Platform::IsWindows()) {
 		const auto minimizedToggled = [] {
 			return cStartMinimized() && !Global::LocalPasscode();
 		};
 
 		const auto autostart = addCheckbox(
-			lng_settings_auto_start,
+			tr::lng_settings_auto_start(tr::now),
 			cAutoStart());
 		const auto minimized = addSlidingCheckbox(
-			lng_settings_start_min,
+			tr::lng_settings_start_min(tr::now),
 			minimizedToggled());
 		const auto sendto = addCheckbox(
-			lng_settings_add_sendto,
+			tr::lng_settings_add_sendto(tr::now),
 			cSendToMenu());
 
-		base::ObservableViewer(
-			autostart->checkedChanged
+		autostart->checkedChanges(
 		) | rpl::filter([](bool checked) {
 			return (checked != cAutoStart());
 		}) | rpl::start_with_next([=](bool checked) {
@@ -356,20 +355,15 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 			}
 		}, autostart->lifetime());
 
-		minimized->toggleOn(rpl::single(
-			autostart->checked()
-		) | rpl::then(base::ObservableViewer(
-			autostart->checkedChanged
-		)));
-		base::ObservableViewer(
-			minimized->entity()->checkedChanged
+		minimized->toggleOn(autostart->checkedValue());
+		minimized->entity()->checkedChanges(
 		) | rpl::filter([=](bool checked) {
 			return (checked != minimizedToggled());
 		}) | rpl::start_with_next([=](bool checked) {
 			if (Global::LocalPasscode()) {
 				minimized->entity()->setChecked(false);
 				Ui::show(Box<InformBox>(
-					lang(lng_error_start_minimized_passcoded)));
+					tr::lng_error_start_minimized_passcoded(tr::now)));
 			} else {
 				cSetStartMinimized(checked);
 				Local::writeSettings();
@@ -382,8 +376,7 @@ void SetupTrayContent(not_null<Ui::VerticalLayout*> container) {
 			minimized->entity()->setChecked(minimizedToggled());
 		}, minimized->lifetime());
 
-		base::ObservableViewer(
-			sendto->checkedChanged
+		sendto->checkedChanges(
 		) | rpl::filter([](bool checked) {
 			return (checked != cSendToMenu());
 		}) | rpl::start_with_next([](bool checked) {
@@ -413,7 +406,7 @@ void SetupTray(not_null<Ui::VerticalLayout*> container) {
 void SetupAnimations(not_null<Ui::VerticalLayout*> container) {
 	AddButton(
 		container,
-		lng_settings_enable_animations,
+		tr::lng_settings_enable_animations(),
 		st::settingsButton
 	)->toggleOn(
 		rpl::single(!anim::Disabled())
@@ -426,33 +419,59 @@ void SetupAnimations(not_null<Ui::VerticalLayout*> container) {
 	}, container->lifetime());
 }
 
-void SetupPerformance(not_null<Ui::VerticalLayout*> container) {
+void SetupPerformance(
+		not_null<Window::SessionController*> controller,
+		not_null<Ui::VerticalLayout*> container) {
 	SetupAnimations(container);
 
+	const auto session = &controller->session();
 	AddButton(
 		container,
-		lng_settings_autoplay_gifs,
+		tr::lng_settings_autoplay_gifs(),
 		st::settingsButton
 	)->toggleOn(
-		rpl::single(cAutoPlayGif())
+		rpl::single(session->settings().autoplayGifs())
 	)->toggledValue(
-	) | rpl::filter([](bool enabled) {
-		return (enabled != cAutoPlayGif());
-	}) | rpl::start_with_next([](bool enabled) {
-		cSetAutoPlayGif(enabled);
-		if (!cAutoPlayGif()) {
-			Auth().data().stopAutoplayAnimations();
+	) | rpl::filter([=](bool enabled) {
+		return (enabled != session->settings().autoplayGifs());
+	}) | rpl::start_with_next([=](bool enabled) {
+		session->settings().setAutoplayGifs(enabled);
+		if (!enabled) {
+			session->data().stopAutoplayAnimations();
 		}
-		Local::writeUserSettings();
+		session->saveSettingsDelayed();
 	}, container->lifetime());
 }
 
-Advanced::Advanced(QWidget *parent, UserData *self)
-: Section(parent) {
-	setupContent();
+void SetupSystemIntegration(
+		not_null<Ui::VerticalLayout*> container,
+		Fn<void(Type)> showOther) {
+	AddDivider(container);
+	AddSkip(container);
+	AddSubsectionTitle(container, tr::lng_settings_system_integration());
+	AddButton(
+		container,
+		tr::lng_settings_section_call_settings(),
+		st::settingsButton
+	)->addClickHandler([=] {
+		showOther(Type::Calls);
+	});
+	SetupTray(container);
+	AddSkip(container);
 }
 
-void Advanced::setupContent() {
+Advanced::Advanced(
+	QWidget *parent,
+	not_null<Window::SessionController*> controller)
+: Section(parent) {
+	setupContent(controller);
+}
+
+rpl::producer<Type> Advanced::sectionShowOther() {
+	return _showOther.events();
+}
+
+void Advanced::setupContent(not_null<Window::SessionController*> controller) {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
 
 	auto empty = true;
@@ -467,7 +486,7 @@ void Advanced::setupContent() {
 		if (HasUpdate()) {
 			addDivider();
 			AddSkip(content);
-			AddSubsectionTitle(content, lng_settings_version_info);
+			AddSubsectionTitle(content, tr::lng_settings_version_info());
 			SetupUpdate(content);
 			AddSkip(content);
 		}
@@ -478,23 +497,22 @@ void Advanced::setupContent() {
 	if (HasConnectionType()) {
 		addDivider();
 		AddSkip(content);
-		AddSubsectionTitle(content, lng_settings_network_proxy);
+		AddSubsectionTitle(content, tr::lng_settings_network_proxy());
 		SetupConnectionType(content);
 		AddSkip(content);
 	}
-	SetupDataStorage(content);
-	if (HasTray()) {
-		addDivider();
-		AddSkip(content);
-		AddSubsectionTitle(content, lng_settings_system_integration);
-		SetupTray(content);
-		AddSkip(content);
-	}
-	addDivider();
+	SetupDataStorage(controller, content);
+	SetupAutoDownload(controller, content);
+	SetupSystemIntegration(content, [=](Type type) {
+		_showOther.fire_copy(type);
+	});
+
+	AddDivider(content);
 	AddSkip(content);
-	AddSubsectionTitle(content, lng_settings_performance);
-	SetupPerformance(content);
+	AddSubsectionTitle(content, tr::lng_settings_performance());
+	SetupPerformance(controller, content);
 	AddSkip(content);
+
 	if (cAutoUpdate()) {
 		addUpdate();
 	}

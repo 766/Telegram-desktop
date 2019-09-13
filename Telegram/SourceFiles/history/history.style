@@ -9,6 +9,17 @@ using "basic.style";
 using "dialogs/dialogs.style";
 using "ui/widgets/widgets.style";
 
+minPhotoSize: 100px;
+minVideoSize: 160px;
+maxMediaSize: 430px;
+maxStickerSize: 256px;
+maxGifSize: 320px;
+maxVideoMessageSize: 240px;
+maxSignatureSize: 144px;
+maxWallPaperWidth: 160px;
+maxWallPaperHeight: 240px;
+historyThemeSize: size(272px, 176px);
+
 historyMinimalWidth: 380px;
 
 historyScroll: ScrollArea(defaultScrollArea) {
@@ -57,6 +68,14 @@ historyToDownBadgeSize: 22px;
 
 historyToDownShownAfter: 480px;
 historyToDownDuration: 150;
+
+dialogsToUpAbove: icon {{ "history_down_arrow-flip_vertical", historyToDownFg, point(17px, 20px) }};
+dialogsToUpAboveOver: icon {{ "history_down_arrow-flip_vertical", historyToDownFgOver, point(17px, 20px) }};
+
+dialogsToUp: TwoIconButton(historyToDown) {
+	iconAbove: dialogsToUpAbove;
+	iconAboveOver: dialogsToUpAboveOver;
+}
 
 historyUnreadMentions: TwoIconButton(historyToDown) {
 	iconAbove: icon {{ "history_unread_mention", historyToDownFg, point(16px, 16px) }};
@@ -176,15 +195,34 @@ historyComposeButton: FlatButton {
 		color: historyComposeButtonBgRipple;
 	}
 }
+historyComposeButtonLabel: FlatLabel(defaultFlatLabel) {
+	textFg: windowActiveTextFg;
+	style: semiboldTextStyle;
+}
 historyUnblock: FlatButton(historyComposeButton) {
 	color: attentionButtonFg;
 	overColor: attentionButtonFgOver;
 }
+historyContactStatusButton: FlatButton(historyComposeButton) {
+	height: 49px;
+	textTop: 16px;
+	overBgColor: historyComposeButtonBg;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: historyComposeButtonBgOver;
+	}
+}
+historyContactStatusBlock: FlatButton(historyContactStatusButton) {
+	color: attentionButtonFg;
+	overColor: attentionButtonFg;
+}
+historyContactStatusMinSkip: 16px;
 
 historySendIcon: icon {{ "send_control_send", historySendIconFg }};
 historySendIconOver: icon {{ "send_control_send", historySendIconFgOver }};
 historySendIconPosition: point(11px, 11px);
 historySendSize: size(46px, 46px);
+historyScheduleIcon: icon {{ "send_control_schedule", historyComposeAreaBg }};
+historyScheduleIconPosition: point(8px, 8px);
 historyEditSaveIcon: icon {{ "send_control_save", historySendIconFg, point(3px, 7px) }};
 historyEditSaveIconOver: icon {{ "send_control_save", historySendIconFgOver, point(3px, 7px) }};
 
@@ -206,7 +244,7 @@ historyAttach: IconButton {
 historyAttachEmoji: IconButton(historyAttach) {
 	icon: icon {{ "send_control_emoji", historyComposeIconFg }};
 	iconOver: icon {{ "send_control_emoji", historyComposeIconFgOver }};
-	iconPosition: point(15px, 15px);
+	iconPosition: point(-1px, -1px);
 }
 historyAttachEmojiFgActive: windowActiveTextFg;
 historyAttachEmojiActive: icon {{ "send_control_emoji", historyAttachEmojiFgActive }};
@@ -231,6 +269,17 @@ historyBotKeyboardHide: IconButton(historyAttach) {
 historyBotCommandStart: IconButton(historyAttach) {
 	icon: icon {{ "send_control_bot_command", historyComposeIconFg }};
 	iconOver: icon {{ "send_control_bot_command", historyComposeIconFgOver }};
+}
+historyScheduledToggle: IconButton(historyAttach) {
+	icon: icon {
+		{ "send_control_scheduled", historyComposeIconFg },
+		{ "send_control_scheduled_dot", attentionButtonFg }
+	};
+	iconOver: icon {
+		{ "send_control_scheduled", historyComposeIconFgOver },
+		{ "send_control_scheduled_dot", attentionButtonFg }
+	};
+	iconPosition: point(-1px, -1px);
 }
 historyRecordVoiceFg: historyComposeIconFg;
 historyRecordVoiceFgOver: historyComposeIconFgOver;
@@ -279,23 +328,6 @@ historyReplyCancel: IconButton {
 		color: windowBgOver;
 	}
 }
-
-reportSpamHide: FlatButton {
-	color: windowActiveTextFg;
-	overColor: windowActiveTextFg;
-
-	bgColor: transparent;
-	overBgColor: transparent;
-
-	width: -40px;
-	height: 46px;
-
-	textTop: 15px;
-
-	font: font(fsize);
-	overFont: font(fsize underline);
-}
-reportSpamSeparator: 30px;
 
 msgBotKbDuration: 200;
 msgBotKbFont: semiboldFont;
@@ -469,4 +501,132 @@ historyAboutProxy: FlatLabel(defaultFlatLabel) {
 }
 historyAboutProxyPadding: margins(20px, 10px, 20px, 10px);
 
-historyMapPoint: icon {{ "map_point", windowBgActive }};
+historyMapPoint: icon {{ "map_point", mapPointDrop }};
+historyMapPointInner: icon {{ "map_point_inner", mapPointDot }};
+
+webPageLeft: 10px;
+webPageBar: 2px;
+webPageTitleFont: semiboldFont;
+webPageTitleStyle: semiboldTextStyle;
+webPageTitleOutFg: historyTextOutFg;
+webPageTitleInFg: historyTextInFg;
+webPageDescriptionOutFg: historyTextOutFg;
+webPageDescriptionInFg: historyTextInFg;
+webPageDescriptionFont: normalFont;
+webPageDescriptionStyle: defaultTextStyle;
+webPagePhotoSize: 100px;
+webPagePhotoDelta: 8px;
+
+historyPollQuestionFont: semiboldFont;
+historyPollQuestionStyle: TextStyle(defaultTextStyle) {
+	font: historyPollQuestionFont;
+	linkFont: historyPollQuestionFont;
+	linkFontOver: historyPollQuestionFont;
+}
+historyPollAnswerStyle: defaultTextStyle;
+historyPollQuestionTop: 7px;
+historyPollSubtitleSkip: 2px;
+historyPollAnswerPadding: margins(31px, 10px, 0px, 10px);
+historyPollAnswersSkip: 3px;
+historyPollPercentFont: semiboldFont;
+historyPollPercentSkip: 6px;
+historyPollPercentTop: 0px;
+historyPollTotalVotesSkip: 5px;
+historyPollFillingMin: 4px;
+historyPollFillingHeight: 4px;
+historyPollFillingRadius: 1px;
+historyPollFillingBottom: 2px;
+historyPollFillingRight: 4px;
+historyPollRadio: Radio(defaultRadio) {
+	bg: transparent;
+	untoggledFg: checkboxFg;
+	toggledFg: windowBgActive;
+	diameter: 18px;
+	thickness: 2px;
+	skip: 65px; // * 0.1
+	duration: 120;
+	rippleAreaPadding: 8px;
+}
+historyPollRadioOpacity: 0.7;
+historyPollRadioOpacityOver: 1.;
+historyPollDuration: 300;
+historyPollRadialAnimation: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+	thickness: 2px;
+	size: size(18px, 18px);
+}
+historyPollRippleIn: RippleAnimation(defaultRippleAnimation) {
+	color: msgWaveformInInactive;
+}
+historyPollRippleOut: RippleAnimation(defaultRippleAnimation) {
+	color: msgWaveformOutInactive;
+}
+historyPollRippleOpacity: 0.3;
+
+boxAttachEmoji: IconButton(historyAttachEmoji) {
+	width: 30px;
+	height: 30px;
+	rippleAreaSize: 0px;
+}
+boxAttachEmojiTop: 20px;
+
+historyGroupAboutMargin: 16px;
+historyGroupAboutPadding: margins(24px, 16px, 24px, 16px);
+historyGroupAboutBulletSkip: 16px;
+historyGroupAboutHeaderSkip: 10px;
+historyGroupAboutTextSkip: 10px;
+historyGroupAboutSkip: 8px;
+
+historyVideoDownloadSize: msgFileSize;
+historyVideoCancel: icon {{ "playlist_cancel", historyFileThumbIconFg }};
+historyVideoCancelSelected: icon {{ "playlist_cancel", historyFileThumbIconFgSelected }};
+historyVideoDownload: icon {{ "playlist_download", historyFileThumbIconFg }};
+historyVideoDownloadSelected: icon {{ "playlist_download", historyFileThumbIconFgSelected }};
+historyVideoRadialLine: msgFileRadialLine;
+
+historyAudioDownloadSize: 20px;
+historyAudioRadialLine: 2px;
+historyAudioDownloadShift: 28px;
+historyAudioInCancel: icon {{ "history_audio_cancel", historyFileInIconFg }};
+historyAudioInCancelSelected: icon {{ "history_audio_cancel", historyFileInIconFgSelected }};
+historyAudioOutCancel: icon {{ "history_audio_cancel", historyFileOutIconFg }};
+historyAudioOutCancelSelected: icon {{ "history_audio_cancel", historyFileOutIconFgSelected }};
+historyAudioInDownload: icon {{ "history_audio_download", historyFileInIconFg }};
+historyAudioInDownloadSelected: icon {{ "history_audio_download", historyFileInIconFgSelected }};
+historyAudioOutDownload: icon {{ "history_audio_download", historyFileOutIconFg }};
+historyAudioOutDownloadSelected: icon {{ "history_audio_download", historyFileOutIconFgSelected }};
+
+historySlowmodeCounterMargins: margins(0px, 0px, 10px, 0px);
+
+largeEmojiSize: 36px;
+largeEmojiOutline: 1px;
+largeEmojiPadding: margins(0px, 0px, 0px, 0px);
+largeEmojiSkip: 4px;
+
+scheduleHeight: 95px;
+scheduleDateTop: 38px;
+scheduleDateField: InputField(defaultInputField) {
+	textMargins: margins(2px, 0px, 2px, 0px);
+	placeholderScale: 0.;
+	heightMin: 30px;
+	textAlign: align(top);
+	font: font(14px);
+}
+scheduleTimeField: InputField(scheduleDateField) {
+	border: 0px;
+	borderActive: 0px;
+	heightMin: 28px;
+	placeholderFont: font(14px);
+	placeholderFgActive: placeholderFgActive;
+}
+scheduleDateWidth: 136px;
+scheduleTimeWidth: 72px;
+scheduleAtSkip: 24px;
+scheduleAtTop: 42px;
+scheduleAtLabel: FlatLabel(defaultFlatLabel) {
+}
+scheduleTimeSeparator: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px);
+	}
+}
+scheduleTimeSeparatorPadding: margins(2px, 0px, 2px, 0px);

@@ -8,12 +8,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "history/history_item.h"
+#include "ui/empty_userpic.h"
+#include "ui/effects/animations.h"
 
-class HistoryDocument;
 struct WebPageData;
 
 namespace HistoryView {
 class Element;
+class Document;
 } // namespace HistoryView
 
 struct HistoryMessageVia : public RuntimeComponent<HistoryMessageVia, HistoryItem> {
@@ -37,8 +39,9 @@ struct HistoryMessageSigned : public RuntimeComponent<HistoryMessageSigned, Hist
 	void refresh(const QString &date);
 	int maxWidth() const;
 
+	bool isElided = false;
 	QString author;
-	Text signature;
+	Ui::Text::String signature;
 };
 
 struct HistoryMessageEdited : public RuntimeComponent<HistoryMessageEdited, HistoryItem> {
@@ -46,7 +49,25 @@ struct HistoryMessageEdited : public RuntimeComponent<HistoryMessageEdited, Hist
 	int maxWidth() const;
 
 	TimeId date = 0;
-	Text text;
+	Ui::Text::String text;
+};
+
+struct HiddenSenderInfo {
+	explicit HiddenSenderInfo(const QString &name);
+
+	QString name;
+	QString firstName;
+	QString lastName;
+	PeerId colorPeerId = 0;
+	Ui::EmptyUserpic userpic;
+	Ui::Text::String nameText;
+
+	inline bool operator==(const HiddenSenderInfo &other) const {
+		return name == other.name;
+	}
+	inline bool operator!=(const HiddenSenderInfo &other) const {
+		return !(*this == other);
+	}
 };
 
 struct HistoryMessageForwarded : public RuntimeComponent<HistoryMessageForwarded, HistoryItem> {
@@ -54,9 +75,10 @@ struct HistoryMessageForwarded : public RuntimeComponent<HistoryMessageForwarded
 
 	TimeId originalDate = 0;
 	PeerData *originalSender = nullptr;
+	std::unique_ptr<HiddenSenderInfo> hiddenSenderInfo;
 	QString originalAuthor;
 	MsgId originalId = 0;
-	mutable Text text = { 1 };
+	mutable Ui::Text::String text = { 1 };
 
 	PeerData *savedFromPeer = nullptr;
 	MsgId savedFromMsgId = 0;
@@ -123,7 +145,7 @@ struct HistoryMessageReply : public RuntimeComponent<HistoryMessageReply, Histor
 	MsgId replyToMsgId = 0;
 	HistoryItem *replyToMsg = nullptr;
 	ClickHandlerPtr replyToLnk;
-	mutable Text replyToName, replyToText;
+	mutable Ui::Text::String replyToName, replyToText;
 	mutable int replyToVersion = 0;
 	mutable int maxReplyWidth = 0;
 	std::unique_ptr<HistoryMessageVia> replyToVia;
@@ -142,11 +164,26 @@ struct HistoryMessageMarkupButton {
 		SwitchInlineSame,
 		Game,
 		Buy,
+		Auth,
 	};
+
+	HistoryMessageMarkupButton(
+		Type type,
+		const QString &text,
+		const QByteArray &data = QByteArray(),
+		const QString &forwardText = QString(),
+		int32 buttonId = 0);
+
+	static HistoryMessageMarkupButton *Get(
+		FullMsgId itemId,
+		int row,
+		int column);
+
 	Type type;
-	QString text;
+	QString text, forwardText;
 	QByteArray data;
-	mutable mtpRequestId requestId;
+	int32 buttonId = 0;
+	mutable mtpRequestId requestId = 0;
 
 };
 
@@ -256,7 +293,7 @@ public:
 	private:
 		const style::BotKeyboardButton *_st;
 
-		void paintButton(Painter &p, int outerWidth, const ReplyKeyboard::Button &button, TimeMs ms) const;
+		void paintButton(Painter &p, int outerWidth, const ReplyKeyboard::Button &button) const;
 		friend class ReplyKeyboard;
 
 	};
@@ -275,7 +312,7 @@ public:
 	int naturalWidth() const;
 	int naturalHeight() const;
 
-	void paint(Painter &p, int outerWidth, const QRect &clip, TimeMs ms) const;
+	void paint(Painter &p, int outerWidth, const QRect &clip) const;
 	ClickHandlerPtr getLink(QPoint point) const;
 
 	void clickHandlerActiveChanged(const ClickHandlerPtr &p, bool active);
@@ -292,7 +329,7 @@ private:
 		Button &operator=(Button &&other);
 		~Button();
 
-		Text text = { 1 };
+		Ui::Text::String text = { 1 };
 		QRect rect;
 		int characters = 0;
 		float64 howMuchOver = 0.;
@@ -308,15 +345,15 @@ private:
 
 	ButtonCoords findButtonCoordsByClickHandler(const ClickHandlerPtr &p);
 
-	void step_selected(TimeMs ms, bool timer);
+	bool selectedAnimationCallback(crl::time now);
 
 	const not_null<const HistoryItem*> _item;
 	int _width = 0;
 
 	std::vector<std::vector<Button>> _rows;
 
-	base::flat_map<int, TimeMs> _animations;
-	BasicAnimation _a_selected;
+	base::flat_map<int, crl::time> _animations;
+	Ui::Animations::Basic _selectedAnimation;
 	std::unique_ptr<Style> _st;
 
 	ClickHandlerPtr _savedPressed;
@@ -338,39 +375,41 @@ struct HistoryMessageLogEntryOriginal
 };
 
 class FileClickHandler;
-struct HistoryDocumentThumbed : public RuntimeComponent<HistoryDocumentThumbed, HistoryDocument> {
-	std::shared_ptr<FileClickHandler> _linksavel, _linkcancell;
+struct HistoryDocumentThumbed : public RuntimeComponent<HistoryDocumentThumbed, HistoryView::Document> {
+	std::shared_ptr<FileClickHandler> _linksavel;
+	std::shared_ptr<FileClickHandler> _linkopenwithl;
+	std::shared_ptr<FileClickHandler> _linkcancell;
 	int _thumbw = 0;
 
 	mutable int _linkw = 0;
 	mutable QString _link;
 };
 
-struct HistoryDocumentCaptioned : public RuntimeComponent<HistoryDocumentCaptioned, HistoryDocument> {
+struct HistoryDocumentCaptioned : public RuntimeComponent<HistoryDocumentCaptioned, HistoryView::Document> {
 	HistoryDocumentCaptioned();
 
-	Text _caption;
+	Ui::Text::String _caption;
 };
 
-struct HistoryDocumentNamed : public RuntimeComponent<HistoryDocumentNamed, HistoryDocument> {
+struct HistoryDocumentNamed : public RuntimeComponent<HistoryDocumentNamed, HistoryView::Document> {
 	QString _name;
 	int _namew = 0;
 };
 
 struct HistoryDocumentVoicePlayback {
-	HistoryDocumentVoicePlayback(const HistoryDocument *that);
+	HistoryDocumentVoicePlayback(const HistoryView::Document *that);
 
-	int32 _position = 0;
-	anim::value a_progress;
-	BasicAnimation _a_progress;
+	int32 position = 0;
+	anim::value progress;
+	Ui::Animations::Basic progressAnimation;
 };
 
-class HistoryDocumentVoice : public RuntimeComponent<HistoryDocumentVoice, HistoryDocument> {
+class HistoryDocumentVoice : public RuntimeComponent<HistoryDocumentVoice, HistoryView::Document> {
 	// We don't use float64 because components should align to pointer even on 32bit systems.
 	static constexpr float64 kFloatToIntMultiplier = 65536.;
 
 public:
-	void ensurePlayback(const HistoryDocument *interfaces) const;
+	void ensurePlayback(const HistoryView::Document *interfaces) const;
 	void checkPlaybackFinished() const;
 
 	mutable std::unique_ptr<HistoryDocumentVoicePlayback> _playback;

@@ -10,7 +10,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_download.h"
 #include "storage/cache/storage_cache_database.h"
 #include "storage/localimageloader.h"
-#include "auth_session.h"
+#include "main/main_session.h"
+
+namespace Data {
+class WallPaper;
+} // namespace Data
+
+namespace Lang {
+struct Language;
+} // namespace Lang
 
 namespace Storage {
 class EncryptionKey;
@@ -18,6 +26,7 @@ class EncryptionKey;
 
 namespace Window {
 namespace Theme {
+struct Object;
 struct Saved;
 } // namespace Theme
 } // namespace Window
@@ -102,12 +111,19 @@ bool hasDraftCursors(const PeerId &peer);
 bool hasDraft(const PeerId &peer);
 
 void writeFileLocation(MediaKey location, const FileLocation &local);
-FileLocation readFileLocation(MediaKey location, bool check = true);
+FileLocation readFileLocation(MediaKey location);
+void removeFileLocation(MediaKey location);
 
-QString cachePath();
 Storage::EncryptionKey cacheKey();
+QString cachePath();
 Storage::Cache::Database::Settings cacheSettings();
-void updateCacheSettings(Storage::Cache::Database::SettingsUpdate &update);
+void updateCacheSettings(
+	Storage::Cache::Database::SettingsUpdate &update,
+	Storage::Cache::Database::SettingsUpdate &updateBig);
+
+Storage::EncryptionKey cacheBigFileKey();
+QString cacheBigFilePath();
+Storage::Cache::Database::Settings cacheBigFileSettings();
 
 void countVoiceWaveform(DocumentData *document);
 
@@ -132,15 +148,20 @@ void writeSavedGifs();
 void readSavedGifs();
 int32 countSavedGifsHash();
 
-void writeBackground(int32 id, const QImage &img);
+void writeBackground(const Data::WallPaper &paper, const QImage &image);
 bool readBackground();
 
 void writeTheme(const Window::Theme::Saved &saved);
 void clearTheme();
-bool copyThemeColorsToPalette(const QString &file);
-Window::Theme::Saved readThemeAfterSwitch();
+[[nodiscard]] Window::Theme::Saved readThemeAfterSwitch();
+
+[[nodiscard]] Window::Theme::Object ReadThemeContent();
 
 void writeLangPack();
+void pushRecentLanguage(const Lang::Language &language);
+std::vector<Lang::Language> readRecentLanguages();
+void saveRecentLanguages(const std::vector<Lang::Language> &list);
+void removeRecentLanguage(const QString &id);
 
 void writeRecentHashtagsAndBots();
 void readRecentHashtagsAndBots();
@@ -149,12 +170,6 @@ void saveRecentSearchHashtags(const QString &text);
 
 void WriteExportSettings(const Export::Settings &settings);
 Export::Settings ReadExportSettings();
-
-void addSavedPeer(PeerData *peer, const QDateTime &position);
-void removeSavedPeer(PeerData *peer);
-void readSavedPeers();
-
-void writeReportSpamStatuses();
 
 void writeSelf();
 void readSelf(const QByteArray &serialized, int32 streamVersion);

@@ -7,11 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/admin_log/history_admin_log_filter.h"
 
-#include "styles/style_boxes.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/effects/ripple_animation.h"
 #include "lang/lang_keys.h"
 #include "data/data_peer_values.h"
+#include "data/data_channel.h"
+#include "data/data_user.h"
+#include "base/unixtime.h"
+#include "styles/style_boxes.h"
 
 namespace AdminLog {
 namespace {
@@ -23,13 +26,16 @@ public:
 	bool checked() const {
 		return _check->checked();
 	}
-	base::Observable<bool> checkedChanged;
+	rpl::producer<bool> checkedChanges() const;
+	rpl::producer<bool> checkedValue() const;
 
 	enum class NotifyAboutChange {
 		Notify,
 		DontNotify,
 	};
-	void setChecked(bool checked, NotifyAboutChange notify = NotifyAboutChange::Notify);
+	void setChecked(
+		bool checked,
+		NotifyAboutChange notify = NotifyAboutChange::Notify);
 
 	void finishAnimating();
 
@@ -48,6 +54,7 @@ protected:
 private:
 	const style::Checkbox &_st;
 	std::unique_ptr<Ui::AbstractCheckView> _check;
+	rpl::event_stream<bool> _checkedChanges;
 
 	QRect _checkRect;
 
@@ -66,18 +73,26 @@ UserCheckbox::UserCheckbox(QWidget *parent, not_null<UserData*> user, bool check
 		if (isDisabled()) return;
 		setChecked(!this->checked());
 	});
-	auto now = unixtime();
+	auto now = base::unixtime::now();
 	_statusText = Data::OnlineText(_user, now);
 	_statusOnline = Data::OnlineTextActive(_user, now);
 	auto checkSize = _check->getSize();
 	_checkRect = { QPoint(_st.margin.left(), (st::contactsPhotoSize - checkSize.height()) / 2), checkSize };
 }
 
+rpl::producer<bool> UserCheckbox::checkedChanges() const {
+	return _checkedChanges.events();
+}
+
+rpl::producer<bool> UserCheckbox::checkedValue() const {
+	return _checkedChanges.events_starting_with(checked());
+}
+
 void UserCheckbox::setChecked(bool checked, NotifyAboutChange notify) {
 	if (_check->checked() != checked) {
 		_check->setChecked(checked, anim::type::normal);
 		if (notify == NotifyAboutChange::Notify) {
-			checkedChanged.notify(checked, true);
+			_checkedChanges.fire_copy(checked);
 		}
 	}
 }
@@ -85,10 +100,9 @@ void UserCheckbox::setChecked(bool checked, NotifyAboutChange notify) {
 void UserCheckbox::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 
-	auto ms = getms();
-	auto active = _check->currentAnimationValue(ms);
+	auto active = _check->currentAnimationValue();
 	auto color = anim::color(_st.rippleBg, _st.rippleBgActive, active);
-	paintRipple(p, _st.rippleAreaPosition.x(), _st.rippleAreaPosition.y() + (_checkRect.y() - st::defaultBoxCheckbox.margin.top()), ms, &color);
+	paintRipple(p, _st.rippleAreaPosition.x(), _st.rippleAreaPosition.y() + (_checkRect.y() - st::defaultBoxCheckbox.margin.top()), &color);
 
 	auto realCheckRect = myrtlrect(_checkRect);
 	if (realCheckRect.intersects(e->rect())) {
@@ -104,7 +118,7 @@ void UserCheckbox::paintEvent(QPaintEvent *e) {
 	auto nameTop = userpicTop + st::contactsNameTop;
 	auto nameWidth = width() - nameLeft - st::contactsPadding.right();
 	p.setPen(st::contactsNameFg);
-	_user->nameText.drawLeftElided(p, nameLeft, nameTop, nameWidth, width());
+	_user->nameText().drawLeftElided(p, nameLeft, nameTop, nameWidth, width());
 
 	auto statusLeft = nameLeft;
 	auto statusTop = userpicTop + st::contactsStatusTop;
@@ -132,9 +146,14 @@ QPoint UserCheckbox::prepareRippleStartPosition() const {
 
 } // namespace
 
-class FilterBox::Inner : public TWidget, private base::Subscriber {
+class FilterBox::Inner : public Ui::RpWidget {
 public:
-	Inner(QWidget *parent, not_null<ChannelData*> channel, const std::vector<not_null<UserData*>> &admins, const FilterValue &filter, Fn<void()> changedCallback);
+	Inner(
+		QWidget *parent,
+		not_null<ChannelData*> channel,
+		const std::vector<not_null<UserData*>> &admins,
+		const FilterValue &filter,
+		Fn<void()> changedCallback);
 
 	template <typename Widget>
 	QPointer<Widget> addRow(object_ptr<Widget> widget, int marginTop) {
@@ -155,11 +174,15 @@ protected:
 	void resizeEvent(QResizeEvent *e) override;
 
 private:
-	void createControls(const std::vector<not_null<UserData*>> &admins, const FilterValue &filter);
+	void createControls(
+		const std::vector<not_null<UserData*>> &admins,
+		const FilterValue &filter);
 	void createAllActionsCheckbox(const FilterValue &filter);
 	void createActionsCheckboxes(const FilterValue &filter);
 	void createAllUsersCheckbox(const FilterValue &filter);
-	void createAdminsCheckboxes(const std::vector<not_null<UserData*>> &admins, const FilterValue &filter);
+	void createAdminsCheckboxes(
+		const std::vector<not_null<UserData*>> &admins,
+		const FilterValue &filter);
 
 	not_null<ChannelData*> _channel;
 
@@ -180,7 +203,13 @@ private:
 
 };
 
-FilterBox::Inner::Inner(QWidget *parent, not_null<ChannelData*> channel, const std::vector<not_null<UserData*>> &admins, const FilterValue &filter, Fn<void()> changedCallback) : TWidget(parent)
+FilterBox::Inner::Inner(
+	QWidget *parent,
+	not_null<ChannelData*> channel,
+	const std::vector<not_null<UserData*>> &admins,
+	const FilterValue &filter,
+	Fn<void()> changedCallback)
+: RpWidget(parent)
 , _channel(channel)
 , _changedCallback(std::move(changedCallback)) {
 	createControls(admins, filter);
@@ -195,8 +224,9 @@ void FilterBox::Inner::createControls(const std::vector<not_null<UserData*>> &ad
 
 void FilterBox::Inner::createAllActionsCheckbox(const FilterValue &filter) {
 	auto checked = (filter.flags == 0);
-	_allFlags = addRow(object_ptr<Ui::Checkbox>(this, lang(lng_admin_log_filter_all_actions), checked, st::adminLogFilterCheckbox), st::adminLogFilterCheckbox.margin.top());
-	subscribe(_allFlags->checkedChanged, [this](bool checked) {
+	_allFlags = addRow(object_ptr<Ui::Checkbox>(this, tr::lng_admin_log_filter_all_actions(tr::now), checked, st::adminLogFilterCheckbox), st::adminLogFilterCheckbox.margin.top());
+	_allFlags->checkedChanges(
+	) | rpl::start_with_next([=](bool checked) {
 		if (!std::exchange(_restoringInvariant, true)) {
 			auto allChecked = _allFlags->checked();
 			for_const (auto &&checkbox, _filterFlags) {
@@ -207,7 +237,7 @@ void FilterBox::Inner::createAllActionsCheckbox(const FilterValue &filter) {
 				_changedCallback();
 			}
 		}
-	});
+	}, _allFlags->lifetime());
 }
 
 void FilterBox::Inner::createActionsCheckboxes(const FilterValue &filter) {
@@ -217,7 +247,8 @@ void FilterBox::Inner::createActionsCheckboxes(const FilterValue &filter) {
 		auto checked = (filter.flags == 0) || (filter.flags & flag);
 		auto checkbox = addRow(object_ptr<Ui::Checkbox>(this, std::move(text), checked, st::defaultBoxCheckbox), st::adminLogFilterLittleSkip);
 		_filterFlags.insert(flag, checkbox);
-		subscribe(checkbox->checkedChanged, [this](bool checked) {
+		checkbox->checkedChanges(
+		) | rpl::start_with_next([=](bool checked) {
 			if (!std::exchange(_restoringInvariant, true)) {
 				auto allChecked = true;
 				for_const (auto &&checkbox, _filterFlags) {
@@ -232,26 +263,27 @@ void FilterBox::Inner::createActionsCheckboxes(const FilterValue &filter) {
 					_changedCallback();
 				}
 			}
-		});
+		}, checkbox->lifetime());
 	};
 	auto isGroup = _channel->isMegagroup();
 	if (isGroup) {
-		addFlag(Flag::f_ban | Flag::f_unban | Flag::f_kick | Flag::f_unkick, lang(lng_admin_log_filter_restrictions));
+		addFlag(Flag::f_ban | Flag::f_unban | Flag::f_kick | Flag::f_unkick, tr::lng_admin_log_filter_restrictions(tr::now));
 	}
-	addFlag(Flag::f_promote | Flag::f_demote, lang(lng_admin_log_filter_admins_new));
-	addFlag(Flag::f_join | Flag::f_invite, lang(lng_admin_log_filter_members_new));
-	addFlag(Flag::f_info | Flag::f_settings, lang(_channel->isMegagroup() ? lng_admin_log_filter_info_group : lng_admin_log_filter_info_channel));
-	addFlag(Flag::f_delete, lang(lng_admin_log_filter_messages_deleted));
-	addFlag(Flag::f_edit, lang(lng_admin_log_filter_messages_edited));
+	addFlag(Flag::f_promote | Flag::f_demote, tr::lng_admin_log_filter_admins_new(tr::now));
+	addFlag(Flag::f_join | Flag::f_invite, tr::lng_admin_log_filter_members_new(tr::now));
+	addFlag(Flag::f_info | Flag::f_settings, _channel->isMegagroup() ? tr::lng_admin_log_filter_info_group(tr::now) : tr::lng_admin_log_filter_info_channel(tr::now));
+	addFlag(Flag::f_delete, tr::lng_admin_log_filter_messages_deleted(tr::now));
+	addFlag(Flag::f_edit, tr::lng_admin_log_filter_messages_edited(tr::now));
 	if (isGroup) {
-		addFlag(Flag::f_pinned, lang(lng_admin_log_filter_messages_pinned));
+		addFlag(Flag::f_pinned, tr::lng_admin_log_filter_messages_pinned(tr::now));
 	}
-	addFlag(Flag::f_leave, lang(lng_admin_log_filter_members_removed));
+	addFlag(Flag::f_leave, tr::lng_admin_log_filter_members_removed(tr::now));
 }
 
 void FilterBox::Inner::createAllUsersCheckbox(const FilterValue &filter) {
-	_allUsers = addRow(object_ptr<Ui::Checkbox>(this, lang(lng_admin_log_filter_all_admins), filter.allUsers, st::adminLogFilterCheckbox), st::adminLogFilterSkip);
-	subscribe(_allUsers->checkedChanged, [this](bool checked) {
+	_allUsers = addRow(object_ptr<Ui::Checkbox>(this, tr::lng_admin_log_filter_all_admins(tr::now), filter.allUsers, st::adminLogFilterCheckbox), st::adminLogFilterSkip);
+	_allUsers->checkedChanges(
+	) | rpl::start_with_next([=](bool checked) {
 		if (checked && !std::exchange(_restoringInvariant, true)) {
 			for_const (auto &&checkbox, _admins) {
 				checkbox->setChecked(true);
@@ -261,14 +293,15 @@ void FilterBox::Inner::createAllUsersCheckbox(const FilterValue &filter) {
 				_changedCallback();
 			}
 		}
-	});
+	}, _allUsers->lifetime());
 }
 
 void FilterBox::Inner::createAdminsCheckboxes(const std::vector<not_null<UserData*>> &admins, const FilterValue &filter) {
 	for (auto user : admins) {
 		auto checked = filter.allUsers || base::contains(filter.admins, user);
 		auto checkbox = addRow(object_ptr<UserCheckbox>(this, user, checked), st::adminLogFilterLittleSkip);
-		subscribe(checkbox->checkedChanged, [this](bool checked) {
+		checkbox->checkedChanges(
+		) | rpl::start_with_next([=](bool checked) {
 			if (!std::exchange(_restoringInvariant, true)) {
 				auto allChecked = true;
 				for_const (auto &&checkbox, _admins) {
@@ -285,7 +318,7 @@ void FilterBox::Inner::createAdminsCheckboxes(const std::vector<not_null<UserDat
 					_changedCallback();
 				}
 			}
-		});
+		}, checkbox->lifetime());
 		_admins.insert(user, checkbox);
 	}
 }
@@ -352,7 +385,7 @@ FilterBox::FilterBox(QWidget*, not_null<ChannelData*> channel, const std::vector
 }
 
 void FilterBox::prepare() {
-	setTitle(langFactory(lng_admin_log_filter_title));
+	setTitle(tr::lng_admin_log_filter_title());
 
 	_inner = setInnerWidget(object_ptr<Inner>(this, _channel, _admins, _initialFilter, [this] { refreshButtons(); }));
 	_inner->resizeToWidth(st::boxWideWidth);
@@ -364,13 +397,13 @@ void FilterBox::prepare() {
 void FilterBox::refreshButtons() {
 	clearButtons();
 	if (_inner->canSave()) {
-		addButton(langFactory(lng_settings_save), [this] {
+		addButton(tr::lng_settings_save(), [this] {
 			if (_saveCallback) {
 				_saveCallback(_inner->filter());
 			}
 		});
 	}
-	addButton(langFactory(lng_cancel), [this] { closeBox(); });
+	addButton(tr::lng_cancel(), [this] { closeBox(); });
 }
 
 void FilterBox::resizeToContent() {

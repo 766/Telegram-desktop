@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "mtproto/sender.h"
 #include "chat_helpers/stickers.h"
+#include "ui/effects/animations.h"
 #include "ui/widgets/input_fields.h"
 
 class ConfirmBox;
@@ -27,15 +28,28 @@ class SlideAnimation;
 class CrossButton;
 } // namespace Ui
 
+namespace Main {
+class Session;
+} // namespace Main
+
 class StickersBox : public BoxContent, public RPCSender {
 public:
 	enum class Section {
 		Installed,
 		Featured,
 		Archived,
+		Attached,
 	};
-	StickersBox(QWidget*, Section section);
+
+	StickersBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		Section section);
 	StickersBox(QWidget*, not_null<ChannelData*> megagroup);
+	StickersBox(
+		QWidget*,
+		not_null<Main::Session*> session,
+		const MTPVector<MTPStickerSetCovered> &attachedSets);
 
 	void setInnerFocus() override;
 
@@ -97,6 +111,9 @@ private:
 	void requestArchivedSets();
 	void loadMoreArchived();
 	void getArchivedDone(uint64 offsetId, const MTPmessages_ArchivedStickers &result);
+	void showAttachedStickers();
+
+	const not_null<Main::Session*> _session;
 
 	object_ptr<Ui::SettingsSlider> _tabs = { nullptr };
 	QList<Section> _tabIndices;
@@ -109,7 +126,10 @@ private:
 	Tab _installed;
 	Tab _featured;
 	Tab _archived;
+	Tab _attached;
 	Tab *_tab = nullptr;
+
+	const MTPVector<MTPStickerSetCovered> _attachedSets;
 
 	ChannelData *_megagroupSet = nullptr;
 
@@ -126,15 +146,20 @@ private:
 
 };
 
-int stickerPacksCount(bool includeArchivedOfficial = false);
-
 // This class is hold in header because it requires Qt preprocessing.
-class StickersBox::Inner : public TWidget, private base::Subscriber, private MTP::Sender {
+class StickersBox::Inner
+	: public Ui::RpWidget
+	, private base::Subscriber
+	, private MTP::Sender {
 	Q_OBJECT
 
 public:
 	using Section = StickersBox::Section;
-	Inner(QWidget *parent, Section section);
+
+	Inner(
+		QWidget *parent,
+		not_null<Main::Session*> session,
+		Section section);
 	Inner(QWidget *parent, not_null<ChannelData*> megagroup);
 
 	base::Observable<int> scrollToY;
@@ -193,6 +218,7 @@ private:
 		Row(
 			uint64 id,
 			uint64 accessHash,
+			ImagePtr thumbnail,
 			DocumentData *sticker,
 			int32 count,
 			const QString &title,
@@ -211,6 +237,7 @@ private:
 
 		uint64 id = 0;
 		uint64 accessHash = 0;
+		ImagePtr thumbnail;
 		DocumentData *sticker = nullptr;
 		int32 count = 0;
 		QString title;
@@ -224,6 +251,7 @@ private:
 		int32 pixh = 0;
 		anim::value yadd;
 		std::unique_ptr<Ui::RippleAnimation> ripple;
+		std::unique_ptr<Lottie::SinglePlayer> lottie;
 	};
 	struct MegagroupSet {
 		inline bool operator==(const MegagroupSet &other) const {
@@ -262,18 +290,21 @@ private:
 	QRect relativeButtonRect(bool removeButton) const;
 	void ensureRipple(const style::RippleAnimation &st, QImage mask, bool removeButton);
 
-	void step_shifting(TimeMs ms, bool timer);
-	void paintRow(Painter &p, Row *set, int index, TimeMs ms);
-	void paintFakeButton(Painter &p, Row *set, int index, TimeMs ms);
+	bool shiftingAnimationCallback(crl::time now);
+	void paintRow(Painter &p, not_null<Row*> set, int index);
+	void paintRowThumbnail(Painter &p, not_null<Row*> set, int left);
+	void paintFakeButton(Painter &p, not_null<Row*> set, int index);
 	void clear();
 	void setActionSel(int32 actionSel);
 	float64 aboveShadowOpacity() const;
+	void validateLottieAnimation(not_null<Row*> set);
+	void updateRowThumbnail(not_null<Row*> set);
 
 	void readVisibleSets();
 
 	void updateControlsGeometry();
 	void rebuildAppendSet(const Stickers::Set &set, int maxNameWidth);
-	void fillSetCover(const Stickers::Set &set, DocumentData **outSticker, int *outWidth, int *outHeight) const;
+	void fillSetCover(const Stickers::Set &set, ImagePtr *thumbnail, DocumentData **outSticker, int *outWidth, int *outHeight) const;
 	int fillSetCount(const Stickers::Set &set) const;
 	QString fillSetTitle(const Stickers::Set &set, int maxNameWidth, int *outTitleWidth) const;
 	void fillSetFlags(const Stickers::Set &set, bool *outInstalled, bool *outOfficial, bool *outUnread, bool *outArchived);
@@ -284,15 +315,17 @@ private:
 
 	int countMaxNameWidth() const;
 
+	const not_null<Main::Session*> _session;
+
 	Section _section;
 
 	int32 _rowHeight;
 
 	std::vector<std::unique_ptr<Row>> _rows;
-	QList<TimeMs> _animStartTimes;
-	TimeMs _aboveShadowFadeStart = 0;
+	std::vector<crl::time> _shiftingStartTimes;
+	crl::time _aboveShadowFadeStart = 0;
 	anim::value _aboveShadowFadeOpacity;
-	BasicAnimation _a_shifting;
+	Ui::Animations::Basic _shiftingAnimation;
 
 	Fn<void(uint64 setId)> _installSetCallback;
 	Fn<void()> _loadMoreCallback;

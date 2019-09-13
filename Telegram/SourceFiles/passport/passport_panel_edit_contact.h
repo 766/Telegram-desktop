@@ -31,7 +31,7 @@ struct EditContactScheme {
 
 	QString aboutExisting;
 	QString newHeader;
-	Fn<QString()> newPlaceholder;
+	rpl::producer<QString> newPlaceholder;
 	QString aboutNew;
 	Fn<bool(const QString &value)> validate;
 	Fn<QString(const QString &value)> format;
@@ -83,6 +83,8 @@ object_ptr<BoxContent> VerifyEmailBox(
 	const QString &email,
 	int codeLength,
 	Fn<void(QString code)> submit,
-	rpl::producer<QString> error);
+	Fn<void()> resend,
+	rpl::producer<QString> error,
+	rpl::producer<QString> resent);
 
 } // namespace Passport

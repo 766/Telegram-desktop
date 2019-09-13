@@ -10,9 +10,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/input_fields.h"
 #include "base/timer.h"
 
-class HistoryWidget;
+#include <QtGui/QClipboard>
+
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 QString ConvertTagToMimeTag(const QString &tagId);
@@ -21,21 +26,21 @@ QString PrepareMentionTag(not_null<UserData*> user);
 EntitiesInText ConvertTextTagsToEntities(const TextWithTags::Tags &tags);
 TextWithTags::Tags ConvertEntitiesToTextTags(
 	const EntitiesInText &entities);
-std::unique_ptr<QMimeData> MimeDataFromTextWithEntities(
-	const TextWithEntities &forClipboard);
-void SetClipboardWithEntities(
-	const TextWithEntities &forClipboard,
+std::unique_ptr<QMimeData> MimeDataFromText(const TextForMimeData &text);
+void SetClipboardText(
+	const TextForMimeData &text,
 	QClipboard::Mode mode = QClipboard::Clipboard);
+TextWithTags PrepareEditText(not_null<HistoryItem*> item);
 
 Fn<bool(
 	Ui::InputField::EditLinkSelection selection,
 	QString text,
 	QString link,
 	Ui::InputField::EditLinkAction action)> DefaultEditLinkCallback(
-		not_null<Window::Controller*> controller,
+		not_null<Main::Session*> session,
 		not_null<Ui::InputField*> field);
 void InitMessageField(
-	not_null<Window::Controller*> controller,
+	not_null<Window::SessionController*> controller,
 	not_null<Ui::InputField*> field);
 bool HasSendText(not_null<const Ui::InputField*> field);
 
@@ -54,7 +59,7 @@ struct AutocompleteQuery {
 AutocompleteQuery ParseMentionHashtagBotCommandQuery(
 	not_null<const Ui::InputField*> field);
 
-class QtConnectionOwner {
+class QtConnectionOwner final {
 public:
 	QtConnectionOwner(QMetaObject::Connection connection = {});
 	QtConnectionOwner(QtConnectionOwner &&other);
@@ -102,3 +107,16 @@ private:
 	QtConnectionOwner _connection;
 
 };
+
+enum class SendMenuType {
+	Disabled,
+	SilentOnly,
+	Scheduled,
+	Reminder,
+};
+
+void SetupSendMenu(
+	not_null<Ui::RpWidget*> button,
+	Fn<SendMenuType()> type,
+	Fn<void()> silent,
+	Fn<void()> schedule);

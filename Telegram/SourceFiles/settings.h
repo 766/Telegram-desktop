@@ -90,30 +90,12 @@ DeclareSetting(bool, StartToSettings);
 DeclareReadSetting(bool, ManyInstance);
 
 DeclareSetting(QByteArray, LocalSalt);
-DeclareSetting(DBIScale, RealScale);
-DeclareSetting(DBIScale, ScreenScale);
-DeclareSetting(DBIScale, ConfigScale);
+DeclareSetting(int, ScreenScale);
+DeclareSetting(int, ConfigScale);
 DeclareSetting(QString, TimeFormat);
 
 inline void cChangeTimeFormat(const QString &newFormat) {
 	if (!newFormat.isEmpty()) cSetTimeFormat(newFormat);
-}
-
-inline DBIScale cEvalScale(DBIScale scale) {
-	return (scale == dbisAuto) ? cScreenScale() : scale;
-}
-inline DBIScale cScale() {
-	return cEvalScale(cRealScale());
-}
-
-template <typename T>
-T convertScale(T v) {
-	switch (cScale()) {
-		case dbisOneAndQuarter: return qRound(float64(v) * 1.25 - 0.01);
-		case dbisOneAndHalf: return qRound(float64(v) * 1.5 - 0.01);
-		case dbisTwo: return v * 2;
-	}
-	return v;
 }
 
 namespace Ui {
@@ -154,11 +136,11 @@ DeclareRefSetting(RecentInlineBots, RecentInlineBots);
 DeclareSetting(bool, PasswordRecovered);
 
 DeclareSetting(int32, PasscodeBadTries);
-DeclareSetting(TimeMs, PasscodeLastTry);
+DeclareSetting(crl::time, PasscodeLastTry);
 
 inline bool passcodeCanTry() {
 	if (cPasscodeBadTries() < 3) return true;
-	auto dt = getms(true) - cPasscodeLastTry();
+	auto dt = crl::now() - cPasscodeLastTry();
 	switch (cPasscodeBadTries()) {
 	case 3: return dt >= 5000;
 	case 4: return dt >= 10000;
@@ -172,32 +154,43 @@ inline bool passcodeCanTry() {
 DeclareSetting(QStringList, SendPaths);
 DeclareSetting(QString, StartUrl);
 
-DeclareSetting(bool, Retina);
 DeclareSetting(float64, RetinaFactor);
 DeclareSetting(int32, IntRetinaFactor);
 
-DeclareReadSetting(DBIPlatform, Platform);
-DeclareReadSetting(QString, PlatformString);
-DeclareReadSetting(bool, IsElCapitan);
-DeclareReadSetting(bool, IsSnowLeopard);
-
 DeclareSetting(int, OtherOnline);
 
-class PeerData;
-typedef QMap<PeerData*, QDateTime> SavedPeers;
-typedef QMultiMap<QDateTime, PeerData*> SavedPeersByTime;
-DeclareRefSetting(SavedPeers, SavedPeers);
-DeclareRefSetting(SavedPeersByTime, SavedPeersByTime);
+constexpr auto kInterfaceScaleAuto = 0;
+constexpr auto kInterfaceScaleMin = 100;
+constexpr auto kInterfaceScaleDefault = 100;
+constexpr auto kInterfaceScaleMax = 300;
 
-typedef QMap<uint64, DBIPeerReportSpamStatus> ReportSpamStatuses;
-DeclareRefSetting(ReportSpamStatuses, ReportSpamStatuses);
+inline int cEvalScale(int scale) {
+	return (scale == kInterfaceScaleAuto) ? cScreenScale() : scale;
+}
 
-enum DBIAutoDownloadFlags {
-	dbiadNoPrivate = 0x01,
-	dbiadNoGroups  = 0x02,
-};
+inline int cScale() {
+	return cEvalScale(cConfigScale());
+}
 
-DeclareSetting(int32, AutoDownloadPhoto);
-DeclareSetting(int32, AutoDownloadAudio);
-DeclareSetting(int32, AutoDownloadGif);
-DeclareSetting(bool, AutoPlayGif);
+template <typename T>
+inline T ConvertScale(T value, int scale) {
+	return (value < 0.)
+		? (-ConvertScale(-value, scale))
+		: T(std::round((float64(value) * scale / 100.) - 0.01));
+}
+
+template <typename T>
+inline T ConvertScale(T value) {
+	return ConvertScale(value, cScale());
+}
+
+inline QSize ConvertScale(QSize size) {
+	return QSize(ConvertScale(size.width()), ConvertScale(size.height()));
+}
+
+inline void SetScaleChecked(int scale) {
+	const auto checked = (scale == kInterfaceScaleAuto)
+		? kInterfaceScaleAuto
+		: snap(scale, kInterfaceScaleMin, kInterfaceScaleMax / cIntRetinaFactor());
+	cSetConfigScale(checked);
+}

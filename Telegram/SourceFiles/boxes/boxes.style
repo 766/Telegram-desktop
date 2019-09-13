@@ -13,6 +13,19 @@ using "intro/intro.style";
 boxDuration: 200;
 boxRadius: 3px;
 
+ServiceCheck {
+	margin: margins;
+	diameter: pixels;
+	shift: pixels;
+	thickness: pixels;
+	tip: point;
+	small: pixels;
+	large: pixels;
+	stroke: pixels;
+	color: color;
+	duration: int;
+}
+
 boxButtonFont: font(boxFontSize semibold);
 defaultBoxButton: RoundButton(defaultLightButton) {
 	width: -24px;
@@ -69,13 +82,15 @@ boxTitle: FlatLabel(defaultFlatLabel) {
 		linkFontOver: font(17px semibold underline);
 	}
 }
-boxTitlePosition: point(23px, 20px);
+boxTitlePosition: point(23px, 16px);
 boxTitleHeight: 56px;
 boxLayerTitlePosition: point(23px, 16px);
 boxLayerTitleHeight: 56px;
 boxLayerTitleAdditionalSkip: 9px;
 boxLayerTitleAdditionalFont: normalFont;
 boxLayerScroll: defaultSolidScroll;
+
+boxRowPadding: margins(23px, 0px, 23px, 0px);
 
 boxTopMargin: 6px;
 
@@ -145,6 +160,12 @@ boxPhotoPadding: margins(28px, 28px, 28px, 18px);
 boxPhotoCompressedSkip: 20px;
 boxPhotoCaptionSkip: 8px;
 boxPhotoTextFg: windowSubTextFg;
+
+boxLoadingAnimation: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+	color: windowSubTextFg;
+	thickness: 2px;
+}
+boxLoadingSize: 20px;
 
 cropPointSize: 10px;
 cropSkip: 13px;
@@ -306,12 +327,14 @@ contactsMultiSelect: MultiSelect {
 }
 contactsPhotoCheckIcon: icon {{
 	"default_checkbox_check",
-	windowFgActive,
+	overviewCheckFgActive,
 	point(3px, 6px)
 }};
 contactsPhotoCheck: RoundCheckbox(defaultRoundCheckbox) {
 	size: 20px;
 	sizeSmall: 0.3;
+	bgInactive: overviewCheckBg;
+	bgActive: overviewCheckBgActive;
 	check: contactsPhotoCheckIcon;
 }
 contactsPhotoCheckbox: RoundImageCheckbox {
@@ -402,6 +425,21 @@ shareNameTop: 6px;
 shareColumnSkip: 6px;
 shareActivateDuration: 150;
 shareScrollDuration: 300;
+shareComment: InputField(defaultInputField) {
+	font: normalFont;
+	textMargins: margins(8px, 8px, 8px, 6px);
+	heightMin: 36px;
+	heightMax: 72px;
+	placeholderFg: placeholderFg;
+	placeholderFgActive: placeholderFgActive;
+	placeholderFgError: placeholderFgActive;
+	placeholderMargins: margins(2px, 0px, 2px, 0px);
+	placeholderScale: 0.;
+	placeholderFont: normalFont;
+	border: 0px;
+	borderActive: 0px;
+}
+shareCommentPadding: margins(5px, 5px, 5px, 5px);
 
 notificationsBoxMonitor: icon {{ "monitor", notificationsBoxMonitorFg }};
 notificationsBoxScreenTop: 10px;
@@ -428,7 +466,7 @@ sessionsHeight: 350px;
 sessionHeight: 70px;
 sessionCurrentPadding: margins(0px, 7px, 0px, 4px);
 sessionCurrentHeight: 118px;
-sessionPadding: margins(21px, 10px, 21px, 0px);
+sessionPadding: margins(23px, 10px, 23px, 0px);
 sessionNameFont: msgNameFont;
 sessionNameFg: boxTextFg;
 sessionWhenFont: msgDateFont;
@@ -518,14 +556,23 @@ aboutLabel: FlatLabel(defaultFlatLabel) {
 autoDownloadTopDelta: 10px;
 autoDownloadTitlePosition: point(23px, 18px);
 autoDownloadTitleFont: font(15px semibold);
+autoDownloadLimitSlider: MediaSlider(defaultContinuousSlider) {
+	seekSize: size(15px, 15px);
+}
+autoDownloadLimitPadding: margins(22px, 8px, 22px, 8px);
 
 confirmCaptionArea: InputField(defaultInputField) {
-	textMargins: margins(1px, 26px, 1px, 4px);
+	textMargins: margins(1px, 26px, 31px, 4px);
 	heightMax: 78px;
 }
 confirmBg: windowBgOver;
 confirmMaxHeight: 245px;
+confirmMaxHeightSkip: 25px;
 confirmCompressedSkip: 10px;
+
+supportInfoField: InputField(defaultInputField) {
+	heightMax: 256px;
+}
 
 connectionHostInputField: InputField(defaultInputField) {
 	width: 160px;
@@ -541,9 +588,13 @@ connectionPasswordInputField: InputField(defaultInputField) {
 }
 connectionIPv6Skip: 11px;
 
-langsWidth: 256px;
-langsButton: Checkbox(defaultBoxCheckbox) {
+autolockWidth: 256px;
+autolockButton: Checkbox(defaultBoxCheckbox) {
 	width: 200px;
+}
+
+langsRadio: Radio(defaultRadio) {
+	bg: boxBg;
 }
 
 backgroundPadding: 10px;
@@ -553,6 +604,23 @@ backgroundScroll: ScrollArea(boxLayerScroll) {
 	width: 10px;
 	deltat: 10px;
 	deltab: 10px;
+}
+
+editMediaButtonSize: 29px;
+editMediaButtonSkip: 8px;
+editMediaButtonFileSkipRight: 1px;
+editMediaButtonFileSkipTop: 7px;
+
+editMediaButtonIconFile: icon {{ "settings_edit", menuIconFg }};
+editMediaButtonIconPhoto: icon {{ "settings_edit", msgServiceFg }};
+editMediaButton: IconButton {
+	width: editMediaButtonSize;
+	height: editMediaButtonSize;
+
+	icon: editMediaButtonIconPhoto;
+
+	rippleAreaSize: editMediaButtonSize;
+	ripple: defaultRippleAnimation;
 }
 
 calendarTitleHeight: boxTitleHeight;
@@ -602,6 +670,8 @@ usernameSkip: 49px;
 usernameTextStyle: TextStyle(boxTextStyle, passcodeTextStyle) {
 }
 usernameDefaultFg: windowSubTextFg;
+
+editMediaCheckboxMargins: margins(0px, 15px, 23px, 15px);
 
 downloadPathSkip: 10px;
 
@@ -659,12 +729,14 @@ adminLogFilterUserCheckbox: Checkbox(defaultBoxCheckbox) {
 	checkPosition: point(8px, 6px);
 }
 
-rightsCheckbox: Checkbox(defaultBoxCheckbox) {
+rightsCheckbox: Checkbox(defaultCheckbox) {
+	textPosition: point(10px, 1px);
 	rippleBg: attentionButtonBgOver;
 }
 rightsToggle: Toggle(defaultToggle) {
 	toggledFg: windowBgActive;
 	untoggledFg: attentionButtonFg;
+	lockIcon: icon {{ "info_rights_lock", windowBgActive }};
 	xsize: 8px;
 	vsize: 5px;
 	vshift: 1px;
@@ -672,7 +744,8 @@ rightsToggle: Toggle(defaultToggle) {
 	duration: 120;
 }
 rightsDividerHeight: 10px;
-rightsHeaderMargin: margins(23px, 20px, 23px, 8px);
+rightsDividerMargin: margins(0px, 0px, 0px, 20px);
+rightsHeaderMargin: margins(23px, 0px, 23px, 8px);
 rightsToggleMargin: margins(23px, 8px, 23px, 8px);
 rightsAboutMargin: margins(23px, 8px, 23px, 8px);
 rightsPhotoButton: UserpicButton(defaultUserpicButton) {
@@ -695,7 +768,8 @@ rightsHeaderLabel: FlatLabel(boxLabel) {
 	}
 	textFg: windowActiveTextFg;
 }
-rightsUntilMargin: margins(0px, 8px, 0px, 0px);
+rightsUntilMargin: margins(0px, 8px, 0px, 20px);
+rightsRankMargin: margins(0px, 16px, 0px, 20px);
 
 mutePhotoButton: UserpicButton(defaultUserpicButton) {
 	size: size(40px, 40px);
@@ -810,4 +884,149 @@ themesBackgroundSize: 120px;
 themesScroll: ScrollArea(defaultScrollArea) {
 	bottomsh: 0px;
 	topsh: 0px;
+}
+themesMenuToggle: IconButton(defaultIconButton) {
+	width: 44px;
+	height: 44px;
+
+	icon: icon {{ "title_menu_dots", menuIconFg }};
+	iconOver: icon {{ "title_menu_dots", menuIconFgOver }};
+	iconPosition: point(-1px, -1px);
+
+	rippleAreaPosition: point(4px, 4px);
+	rippleAreaSize: 36px;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: windowBgOver;
+	}
+}
+themesMenuPosition: point(-2px, 25px);
+
+createPollField: InputField(defaultInputField) {
+	font: boxTextFont;
+	textMargins: margins(0px, 0px, 0px, 0px);
+	textAlign: align(left);
+	heightMin: 36px;
+	heightMax: 86px;
+	placeholderFg: placeholderFg;
+	placeholderFgActive: placeholderFgActive;
+	placeholderFgError: placeholderFgActive;
+	placeholderMargins: margins(2px, 0px, 2px, 0px);
+	placeholderAlign: align(topleft);
+	placeholderScale: 0.;
+	placeholderFont: boxTextFont;
+	placeholderShift: -50px;
+	border: 0px;
+	borderActive: 0px;
+	duration: 100;
+}
+createPollFieldPadding: margins(22px, 5px, 22px, 5px);
+createPollOptionField: InputField(createPollField) {
+	textMargins: margins(22px, 8px, 40px, 8px);
+	placeholderMargins: margins(2px, 0px, 2px, 0px);
+	heightMax: 64px;
+}
+createPollLimitLabel: FlatLabel(defaultFlatLabel) {
+	minWidth: 274px;
+	align: align(topleft);
+}
+createPollLimitPadding: margins(22px, 10px, 22px, 5px);
+createPollOptionRemove: CrossButton {
+	width: 22px;
+	height: 22px;
+
+	cross: CrossAnimation {
+		size: 22px;
+		skip: 6px;
+		stroke: 1px;
+		minScale: 0.3;
+	}
+	crossFg: boxTitleCloseFg;
+	crossFgOver: boxTitleCloseFgOver;
+	crossPosition: point(0px, 0px);
+
+	duration: 150;
+	loadingPeriod: 1000;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: windowBgOver;
+	}
+}
+createPollOptionRemovePosition: point(10px, 7px);
+createPollWarning: FlatLabel(defaultFlatLabel) {
+	textFg: windowSubTextFg;
+	palette: TextPalette(defaultTextPalette) {
+		linkFg: boxTextFgError;
+	}
+}
+createPollWarningPosition: point(16px, 6px);
+
+callSettingsButton: IconButton {
+	width: 50px;
+	height: boxLayerTitleHeight;
+	icon: icon {{ "menu_settings", boxTitleCloseFg }};
+	iconOver: icon {{ "menu_settings", boxTitleCloseFgOver }};
+	iconPosition: point(8px, -1px);
+	rippleAreaSize: 44px;
+	rippleAreaPosition: point(0px, 6px);
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: windowBgOver;
+	}
+}
+
+backgroundCheckbox: Checkbox(defaultCheckbox) {
+	textFg: msgServiceFg;
+	textFgActive: msgServiceFg;
+
+	width: -50px;
+	margin: margins(0px, 0px, 0px, 0px);
+
+	textPosition: point(0px, 8px);
+	checkPosition: point(0px, 0px);
+
+	style: semiboldTextStyle;
+}
+
+backgroundCheck: ServiceCheck {
+	margin: margins(12px, 8px, 8px, 8px);
+	diameter: 18px;
+	shift: 2px;
+	thickness: 2px;
+	tip: point(7px, 13px);
+	small: 3px;
+	large: 6px;
+	stroke: 2px;
+	color: msgServiceFg;
+	duration: 200;
+}
+
+urlAuthCheckbox: Checkbox(defaultBoxCheckbox) {
+	width: 240px;
+}
+
+linkedChatAbout: membersAbout;
+linkedChatAboutPadding: margins(20px, 20px, 20px, 20px);
+
+addContactFieldMargin: margins(19px, 0px, 19px, 10px);
+addContactWarningMargin: margins(19px, 10px, 19px, 5px);
+blockUserConfirmation: FlatLabel(boxLabel) {
+	minWidth: 240px;
+}
+
+transferCheckWidth: 300px;
+
+slowmodeLabelsMargin: margins(0px, 5px, 0px, 0px);
+slowmodeLabel: LabelSimple(defaultLabelSimple) {
+	textFg: windowSubTextFg;
+}
+
+customBadgeField: InputField(defaultInputField) {
+	textMargins: margins(2px, 7px, 2px, 0px);
+
+	placeholderFg: placeholderFg;
+	placeholderFgActive: placeholderFgActive;
+	placeholderFgError: placeholderFgActive;
+	placeholderMargins: margins(0px, 0px, 0px, 0px);
+	placeholderScale: 0.;
+	placeholderFont: normalFont;
+
+	heightMin: 32px;
 }

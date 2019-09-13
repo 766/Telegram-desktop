@@ -8,26 +8,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/introstart.h"
 
 #include "lang/lang_keys.h"
-#include "application.h"
 #include "intro/introphone.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 
 namespace Intro {
 
-StartWidget::StartWidget(QWidget *parent, Widget::Data *data) : Step(parent, data, true) {
+StartWidget::StartWidget(
+	QWidget *parent,
+	not_null<Main::Account*> account,
+	not_null<Widget::Data*> data)
+: Step(parent, account, data, true) {
 	setMouseTracking(true);
-	setTitleText([] { return qsl("Telegram Desktop"); });
-	setDescriptionText(langFactory(lng_intro_about));
+	setTitleText(rpl::single(qsl("Telegram Desktop")));
+	setDescriptionText(tr::lng_intro_about());
 	show();
 }
 
 void StartWidget::submit() {
-	goNext(new Intro::PhoneWidget(parentWidget(), getData()));
+	goNext<PhoneWidget>();
 }
 
-QString StartWidget::nextButtonText() const {
-	return lang(lng_start_msgs);
+rpl::producer<QString> StartWidget::nextButtonText() const {
+	return tr::lng_start_msgs();
 }
 
 } // namespace Intro

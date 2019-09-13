@@ -13,7 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/photo_crop_box.h"
 #include "boxes/confirm_box.h"
 #include "lang/lang_keys.h"
-#include "application.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/input_fields.h"
 #include "ui/widgets/labels.h"
@@ -21,14 +20,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Intro {
 
-SignupWidget::SignupWidget(QWidget *parent, Widget::Data *data) : Step(parent, data)
+SignupWidget::SignupWidget(
+	QWidget *parent,
+	not_null<Main::Account*> account,
+	not_null<Widget::Data*> data)
+: Step(parent, account, data)
 , _photo(
 	this,
-	peerFromUser(0),
+	tr::lng_settings_crop_profile(tr::now),
 	Ui::UserpicButton::Role::ChangePhoto,
 	st::defaultUserpicButton)
-, _first(this, st::introName, langFactory(lng_signup_firstname))
-, _last(this, st::introName, langFactory(lng_signup_lastname))
+, _first(this, st::introName, tr::lng_signup_firstname())
+, _last(this, st::introName, tr::lng_signup_lastname())
 , _invertOrder(langFirstNameGoesSecond())
 , _checkRequest(this) {
 	subscribe(Lang::Current().updated(), [this] { refreshLang(); });
@@ -42,8 +45,8 @@ SignupWidget::SignupWidget(QWidget *parent, Widget::Data *data) : Step(parent, d
 
 	setErrorCentered(true);
 
-	setTitleText(langFactory(lng_signup_title));
-	setDescriptionText(langFactory(lng_signup_desc));
+	setTitleText(tr::lng_signup_title());
+	setDescriptionText(tr::lng_signup_desc());
 	setMouseTracking(true);
 }
 
@@ -122,17 +125,17 @@ void SignupWidget::onCheckRequest() {
 void SignupWidget::nameSubmitDone(const MTPauth_Authorization &result) {
 	stopCheck();
 	auto &d = result.c_auth_authorization();
-	if (d.vuser.type() != mtpc_user || !d.vuser.c_user().is_self()) { // wtf?
-		showError(&Lang::Hard::ServerError);
+	if (d.vuser().type() != mtpc_user || !d.vuser().c_user().is_self()) { // wtf?
+		showError(rpl::single(Lang::Hard::ServerError()));
 		return;
 	}
-	finish(d.vuser, _photo->takeResultImage());
+	finish(d.vuser(), _photo->takeResultImage());
 }
 
 bool SignupWidget::nameSubmitFail(const RPCError &error) {
 	if (MTP::isFloodError(error)) {
 		stopCheck();
-		showError(langFactory(lng_flood_error));
+		showError(tr::lng_flood_error());
 		if (_invertOrder) {
 			_first->setFocus();
 		} else {
@@ -145,27 +148,29 @@ bool SignupWidget::nameSubmitFail(const RPCError &error) {
 	stopCheck();
 	auto &err = error.type();
 	if (err == qstr("PHONE_NUMBER_FLOOD")) {
-		Ui::show(Box<InformBox>(lang(lng_error_phone_flood)));
+		Ui::show(Box<InformBox>(tr::lng_error_phone_flood(tr::now)));
 		return true;
-	} else if (err == qstr("PHONE_NUMBER_INVALID") || err == qstr("PHONE_CODE_EXPIRED") ||
-		err == qstr("PHONE_CODE_EMPTY") || err == qstr("PHONE_CODE_INVALID") ||
-		err == qstr("PHONE_NUMBER_OCCUPIED")) {
+	} else if (err == qstr("PHONE_NUMBER_INVALID")
+		|| err == qstr("PHONE_NUMBER_BANNED")
+		|| err == qstr("PHONE_CODE_EXPIRED")
+		|| err == qstr("PHONE_CODE_EMPTY")
+		|| err == qstr("PHONE_CODE_INVALID")
+		|| err == qstr("PHONE_NUMBER_OCCUPIED")) {
 		goBack();
 		return true;
 	} else if (err == "FIRSTNAME_INVALID") {
-		showError(langFactory(lng_bad_name));
+		showError(tr::lng_bad_name());
 		_first->setFocus();
 		return true;
 	} else if (err == "LASTNAME_INVALID") {
-		showError(langFactory(lng_bad_name));
+		showError(tr::lng_bad_name());
 		_last->setFocus();
 		return true;
 	}
 	if (Logs::DebugEnabled()) { // internal server error
-		auto text = err + ": " + error.description();
-		showError([text] { return text; });
+		showError(rpl::single(err + ": " + error.description()));
 	} else {
-		showError(&Lang::Hard::ServerError);
+		showError(rpl::single(Lang::Hard::ServerError()));
 	}
 	if (_invertOrder) {
 		_last->setFocus();
@@ -210,7 +215,6 @@ void SignupWidget::submit() {
 			MTPauth_SignUp(
 				MTP_string(getData()->phone),
 				MTP_bytes(getData()->phoneHash),
-				MTP_string(getData()->code),
 				MTP_string(_firstName),
 				MTP_string(_lastName)),
 			rpcDone(&SignupWidget::nameSubmitDone),
@@ -228,8 +232,8 @@ void SignupWidget::submit() {
 	}
 }
 
-QString SignupWidget::nextButtonText() const {
-	return lang(lng_intro_finish);
+rpl::producer<QString> SignupWidget::nextButtonText() const {
+	return tr::lng_intro_finish();
 }
 
 } // namespace Intro

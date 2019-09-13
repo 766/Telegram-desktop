@@ -15,9 +15,10 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 * Windows XP - Windows 10 (**not** RT)
 * Mac OS X 10.8 - Mac OS X 10.11
 * Mac OS X 10.6 - Mac OS X 10.7 (separate build)
-* Ubuntu 12.04 - Ubuntu 18.04
-* Fedora 22 - Fedora 28
+* Ubuntu 12.04 - Ubuntu 19.04
+* Fedora 22 - Fedora 30
 * [Snappy](https://snapcraft.io/telegram-desktop)
+* [Flathub](https://flathub.org/apps/details/org.telegram.desktop)
 
 ## Third-party
 
@@ -31,7 +32,7 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 * Google Crashpad ([Apache License 2.0](https://chromium.googlesource.com/crashpad/crashpad/+/master/LICENSE))
 * GYP ([BSD License](https://github.com/bnoordhuis/gyp/blob/master/LICENSE))
 * Ninja ([Apache License 2.0](https://github.com/ninja-build/ninja/blob/master/COPYING))
-* OpenAL Soft ([LGPL](http://kcat.strangesoft.net/openal.html))
+* OpenAL Soft ([LGPL](https://github.com/kcat/openal-soft/blob/master/COPYING))
 * Opus codec ([BSD License](http://www.opus-codec.org/license/))
 * FFmpeg ([LGPL](https://www.ffmpeg.org/legal.html))
 * Guideline Support Library ([MIT License](https://github.com/Microsoft/GSL/blob/master/LICENSE))
@@ -44,8 +45,8 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 
 ## Build instructions
 
-* [Visual Studio 2017][msvc]
-* [Xcode 9][xcode]
+* [Visual Studio 2019][msvc]
+* [Xcode 10][xcode]
 * [GYP/CMake on GNU/Linux][cmake]
 
 [//]: # (LINKS)

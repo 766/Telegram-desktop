@@ -43,6 +43,7 @@
           '-Wno-comment',
           '-Wno-missing-field-initializers',
           '-Wno-sign-compare',
+          '-Wno-unknown-attributes',
         ],
       },
       'xcode_settings': {
@@ -62,6 +63,7 @@
         'CLANG_CXX_LANGUAGE_STANDARD': 'c++1z',
         'GCC_INLINES_ARE_PRIVATE_EXTERN': 'YES',
         'GCC_SYMBOLS_PRIVATE_EXTERN': 'YES',
+        'GCC_OPTIMIZATION_LEVEL': '0',
         'ALWAYS_SEARCH_USER_PATHS': 'NO',
       },
       'configurations': {
@@ -88,6 +90,7 @@
         ],
       },
       'defines': [
+        'OS_MAC_OLD',
         'RANGES_CXX_THREAD_LOCAL=0',
       ],
     }, {
@@ -102,5 +105,11 @@
         ],
       },
     }],
+    [ 'build_macstore', {
+      'defines': [
+        'TDESKTOP_DISABLE_AUTOUPDATE',
+        'OS_MAC_STORE',
+      ],
+    }]
   ],
 }

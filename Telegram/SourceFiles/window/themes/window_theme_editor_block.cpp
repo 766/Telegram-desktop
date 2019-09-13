@@ -43,9 +43,9 @@ public:
 	}
 
 	QString description() const {
-		return _description.originalText();
+		return _description.toString();
 	}
-	const Text &descriptionText() const {
+	const Ui::Text::String &descriptionText() const {
 		return _description;
 	}
 	void setDescription(const QString &description) {
@@ -102,7 +102,7 @@ private:
 	QString _copyOf;
 	QColor _value;
 	QString _valueString;
-	Text _description = { st::windowMinWidth / 2 };
+	Ui::Text::String _description = { st::windowMinWidth / 2 };
 
 	OrderedSet<QString> _searchWords;
 	OrderedSet<QChar> _searchStartChars;
@@ -152,7 +152,7 @@ void EditorBlock::Row::fillValueString() {
 void EditorBlock::Row::fillSearchIndex() {
 	_searchWords.clear();
 	_searchStartChars.clear();
-	auto toIndex = _name + ' ' + _copyOf + ' ' + TextUtilities::RemoveAccents(_description.originalText()) + ' ' + _valueString;
+	auto toIndex = _name + ' ' + _copyOf + ' ' + TextUtilities::RemoveAccents(_description.toString()) + ' ' + _valueString;
 	auto words = toIndex.toLower().split(SearchSplitter, QString::SkipEmptyParts);
 	for_const (auto &word, words) {
 		_searchWords.insert(word);
@@ -293,7 +293,7 @@ void EditorBlock::activateRow(const Row &row) {
 		}
 	} else {
 		_editing = findRowIndex(&row);
-		if (auto box = Ui::show(Box<EditColorBox>(row.name(), row.value()))) {
+		if (auto box = Ui::show(Box<EditColorBox>(row.name(), EditColorBox::Mode::RGBA, row.value()))) {
 			box->setSaveCallback(crl::guard(this, [this](QColor value) {
 				saveEditing(value);
 			}));
@@ -392,6 +392,29 @@ bool EditorBlock::feedDescription(const QString &name, const QString &descriptio
 		return true;
 	}
 	return false;
+}
+
+void EditorBlock::sortByDistance(const QColor &to) {
+	auto toHue = int();
+	auto toSaturation = int();
+	auto toLightness = int();
+	to.getHsl(&toHue, &toSaturation, &toLightness);
+	ranges::sort(_data, ranges::less(), [&](const Row &row) {
+		auto fromHue = int();
+		auto fromSaturation = int();
+		auto fromLightness = int();
+		row.value().getHsl(&fromHue, &fromSaturation, &fromLightness);
+		if (!row.copyOf().isEmpty()) {
+			return 365;
+		}
+		const auto a = std::abs(fromHue - toHue);
+		const auto b = 360 + fromHue - toHue;
+		const auto c = 360 + toHue - fromHue;
+		if (std::min(a, std::min(b, c)) > 15) {
+			return 363;
+		}
+		return 255 - fromSaturation;
+	});
 }
 
 template <typename Callback>
@@ -620,22 +643,21 @@ void EditorBlock::paintEvent(QPaintEvent *e) {
 		p.fillRect(clip, st::dialogsBg);
 		p.setFont(st::noContactsFont);
 		p.setPen(st::noContactsColor);
-		p.drawText(QRect(0, 0, width(), st::noContactsHeight), lang(lng_theme_editor_no_keys));
+		p.drawText(QRect(0, 0, width(), st::noContactsHeight), tr::lng_theme_editor_no_keys(tr::now));
 	}
 
-	auto ms = getms();
 	auto cliptop = clip.y();
 	auto clipbottom = cliptop + clip.height();
-	enumerateRowsFrom(cliptop, [this, &p, clipbottom, ms](int index, const Row &row) {
+	enumerateRowsFrom(cliptop, [&](int index, const Row &row) {
 		if (row.top() >= clipbottom) {
 			return false;
 		}
-		paintRow(p, index, row, ms);
+		paintRow(p, index, row);
 		return true;
 	});
 }
 
-void EditorBlock::paintRow(Painter &p, int index, const Row &row, TimeMs ms) {
+void EditorBlock::paintRow(Painter &p, int index, const Row &row) {
 	auto rowTop = row.top() + st::themeEditorMargin.top();
 
 	auto rect = QRect(0, row.top(), width(), row.height());
@@ -643,7 +665,7 @@ void EditorBlock::paintRow(Painter &p, int index, const Row &row, TimeMs ms) {
 	auto active = (findRowIndex(&row) == _editing);
 	p.fillRect(rect, active ? st::dialogsBgActive : selected ? st::dialogsBgOver : st::dialogsBg);
 	if (auto ripple = row.ripple()) {
-		ripple->paint(p, 0, row.top(), width(), ms, &(active ? st::activeButtonBgRipple : st::windowBgRipple)->c);
+		ripple->paint(p, 0, row.top(), width(), &(active ? st::activeButtonBgRipple : st::windowBgRipple)->c);
 		if (ripple->empty()) {
 			row.resetRipple();
 		}

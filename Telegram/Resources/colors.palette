@@ -51,11 +51,6 @@ attentionButtonFgOver: #d14e4e; // default attention button text with mouse over
 attentionButtonBgOver: #fcdfde; // default attention button background with mouse over
 attentionButtonBgRipple: #f4c3c2; // default attention button ripple effect
 
-outlineButtonBg: windowBg; // default left outlined button background (like shared media links in profiles)
-outlineButtonBgOver: lightButtonBgOver; // default left outlined button background with mouse over
-outlineButtonOutlineFg: windowBgActive; // default left outlined button left outline border
-outlineButtonBgRipple: lightButtonBgRipple; // default left outlined button ripple effect
-
 menuBg: windowBg; // default popup menu background
 menuBgOver: windowBgOver; // default popup menu item background with mouse over
 menuBgRipple: windowBgRipple; // default popup menu item ripple effect
@@ -193,6 +188,9 @@ dialogsSentIconFg: #5dc452; // chat list sent message tick / double tick icon
 dialogsUnreadBg: windowBgActive; // chat list unread badge background for not muted chat
 dialogsUnreadBgMuted: #bbbbbb; // chat list unread badge background for muted chat
 dialogsUnreadFg: windowFgActive; // chat list unread badge text
+dialogsArchiveFg: #525252 | dialogsNameFg; // chat list archive name text
+dialogsOnlineBadgeFg: #4dc920 | dialogsUnreadBg; // chat list online status
+dialogsScamFg: dialogsDraftFg; // chat list scam label
 
 dialogsBgOver: windowBgOver; // chat list background with mouse over
 dialogsNameFgOver: windowBoldFgOver; // chat list name text with mouse over
@@ -208,6 +206,8 @@ dialogsSentIconFgOver: dialogsSentIconFg; // chat list sent message tick / doubl
 dialogsUnreadBgOver: dialogsUnreadBg; // chat list unread badge background for not muted chat with mouse over
 dialogsUnreadBgMutedOver: dialogsUnreadBgMuted; // chat list unread badge background for muted chat with mouse over
 dialogsUnreadFgOver: dialogsUnreadFg; // chat list unread badge text with mouse over
+dialogsArchiveFgOver: #525252 | dialogsNameFgOver; // chat list archive name text with mouse over
+dialogsScamFgOver: dialogsDraftFgOver; // chat list scam label with mouse over
 
 dialogsBgActive: #419fd9; // chat list background for current (active) chat
 dialogsNameFgActive: windowFgActive; // chat list name text for current (active) chat
@@ -223,6 +223,8 @@ dialogsSentIconFgActive: dialogsTextFgActive; // chat list sent message tick / d
 dialogsUnreadBgActive: dialogsTextFgActive; // chat list unread badge background for not muted chat for current (active) chat
 dialogsUnreadBgMutedActive: dialogsDraftFgActive; // chat list unread badge background for muted chat for current (active) chat
 dialogsUnreadFgActive: dialogsBgActive; // chat list unread badge text for current (active) chat
+dialogsOnlineBadgeFgActive: #ffffff; // chat list online status for current (active) chat
+dialogsScamFgActive: dialogsDraftFgActive; // chat list scam label for current (active) chat
 
 dialogsRippleBg: windowBgRipple; // chat list background ripple effect
 dialogsRippleBgActive: activeButtonBgRipple; // chat list background ripple effect for current (active) chat
@@ -304,6 +306,7 @@ historyPeer8NameFgSelected: historyPeer8NameFg; // orange group member name in a
 historyPeer8UserpicBg: #faa774; // orange userpic background
 historyPeerUserpicFg: windowFgActive; // default userpic initials
 historyPeerSavedMessagesBg: historyPeer4UserpicBg; // saved messages userpic background
+historyPeerArchiveUserpicBg: dialogsUnreadBgMuted; // archive folder userpic background
 
 // Some values are marked as (adjusted), it means they're adjusted by
 // hue and saturation of the average background color if user chooses
@@ -444,6 +447,9 @@ historyComposeButtonBg: historyComposeAreaBg; // unblock / join channel / mute c
 historyComposeButtonBgOver: windowBgOver; // unblock / join channel / mute channel button background with mouse over
 historyComposeButtonBgRipple: windowBgRipple; // unblock / join channel / mute channel button ripple effect
 
+mapPointDrop: #fd4444; // geo location marker background
+mapPointDot: #ffffff; // geo location marker point
+
 // overview
 overviewCheckBg: #00000040; // shared media / files / links checkbox background for not selected rows when some rows are selected
 overviewCheckBgActive: windowBgActive; // shared media / files / links checkbox background for selected rows
@@ -547,3 +553,7 @@ callBarFg: dialogsNameFgActive; // phone call bar text and icons
 importantTooltipBg: toastBg;
 importantTooltipFg: toastFg;
 importantTooltipFgLink: mediaviewTextLinkFg;
+
+outdatedFg: #ffffff;
+outdateSoonBg: #e08543;
+outdatedBg: #e05745;

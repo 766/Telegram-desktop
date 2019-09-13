@@ -13,6 +13,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class DeleteMessagesBox;
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace HistoryView {
 struct TextState;
 struct StateRequest;
@@ -31,7 +35,7 @@ class ItemBase;
 } // namespace Overview
 
 namespace Window {
-class Controller;
+class SessionController;
 } // namespace Window
 
 namespace Info {
@@ -48,6 +52,8 @@ public:
 	ListWidget(
 		QWidget *parent,
 		not_null<AbstractController*> controller);
+
+	Main::Session &session() const;
 
 	void restart();
 
@@ -308,7 +314,7 @@ private:
 	rpl::lifetime _actionBoxWeakLifetime;
 
 	QPoint _trippleClickPoint;
-	TimeMs _trippleClickStartTime = 0;
+	crl::time _trippleClickStartTime = 0;
 
 	rpl::lifetime _viewerLifetime;
 

@@ -14,7 +14,7 @@ namespace internal {
 namespace {
 
 constexpr auto kForceHttpPort = 80;
-constexpr auto kFullConnectionTimeout = TimeMs(8000);
+constexpr auto kFullConnectionTimeout = crl::time(8000);
 
 } // namespace
 
@@ -81,7 +81,7 @@ void HttpConnection::connectToServer(
 		).arg(protocolDcId
 		).arg(url().toDisplayString()));
 
-	_pingTime = getms();
+	_pingTime = crl::now();
 	sendData(std::move(buffer));
 }
 
@@ -167,28 +167,24 @@ void HttpConnection::requestFinished(QNetworkReply *reply) {
 			if (_status == Status::Ready) {
 				_receivedQueue.push_back(data);
 				emit receivedData();
-			} else {
-				try {
-					const auto res_pq = readPQFakeReply(data);
-					const auto &data = res_pq.c_resPQ();
-					if (data.vnonce == _checkNonce) {
-						DEBUG_LOG(("Connection Info: "
-							"HTTP-transport to %1 connected by pq-response"
-							).arg(_address));
-						_status = Status::Ready;
-						_pingTime = getms() - _pingTime;
-						emit connected();
-					} else {
-						DEBUG_LOG(("Connection Error: "
-							"Wrong nonce received in HTTP fake pq-responce"));
-						emit error(kErrorCodeOther);
-					}
-				} catch (Exception &e) {
+			} else if (const auto res_pq = readPQFakeReply(data)) {
+				const auto &data = res_pq->c_resPQ();
+				if (data.vnonce() == _checkNonce) {
+					DEBUG_LOG(("Connection Info: "
+						"HTTP-transport to %1 connected by pq-response"
+						).arg(_address));
+					_status = Status::Ready;
+					_pingTime = crl::now() - _pingTime;
+					emit connected();
+				} else {
 					DEBUG_LOG(("Connection Error: "
-						"Exception in parsing HTTP fake pq-responce, %1"
-						).arg(e.what()));
+						"Wrong nonce received in HTTP fake pq-responce"));
 					emit error(kErrorCodeOther);
 				}
+			} else {
+				DEBUG_LOG(("Connection Error: "
+					"Could not parse HTTP fake pq-responce"));
+				emit error(kErrorCodeOther);
 			}
 		}
 	} else {
@@ -200,11 +196,11 @@ void HttpConnection::requestFinished(QNetworkReply *reply) {
 	}
 }
 
-TimeMs HttpConnection::pingTime() const {
-	return isConnected() ? _pingTime : TimeMs(0);
+crl::time HttpConnection::pingTime() const {
+	return isConnected() ? _pingTime : crl::time(0);
 }
 
-TimeMs HttpConnection::fullConnectTimeout() const {
+crl::time HttpConnection::fullConnectTimeout() const {
 	return kFullConnectionTimeout;
 }
 

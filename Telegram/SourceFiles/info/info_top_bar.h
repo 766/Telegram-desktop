@@ -9,12 +9,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/rp_widget.h"
 #include "ui/wrap/fade_wrap.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/numbers_animation.h"
 #include "info/info_wrap_widget.h"
 
 namespace style {
 struct InfoTopBar;
 } // namespace style
+
+namespace Window {
+class SessionNavigation;
+} // namespace Window
 
 namespace Ui {
 class IconButton;
@@ -38,6 +43,7 @@ class TopBar : public Ui::RpWidget {
 public:
 	TopBar(
 		QWidget *parent,
+		not_null<Window::SessionNavigation*> navigation,
 		const style::InfoTopBar &st,
 		SelectedItems &&items);
 
@@ -81,6 +87,8 @@ public:
 	void finishAnimating() {
 		updateControlsVisibility(anim::type::instant);
 	}
+
+	void showSearch();
 
 protected:
 	int resizeGetHeight(int newWidth) override;
@@ -127,8 +135,10 @@ private:
 	template <typename Widget, typename IsVisible>
 	void registerToggleControlCallback(Widget *widget, IsVisible &&callback);
 
+	const not_null<Window::SessionNavigation*> _navigation;
+
 	const style::InfoTopBar &_st;
-	Animation _a_highlight;
+	Ui::Animations::Simple _a_highlight;
 	bool _highlight = false;
 	QPointer<Ui::FadeWrap<Ui::IconButton>> _back;
 	std::vector<base::unique_qptr<Ui::RpWidget>> _buttons;

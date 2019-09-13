@@ -13,7 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_element.h"
 #include "history/history.h"
 
-class AuthSession;
+namespace Main {
+class Session;
+} // namespace Main
 
 namespace Ui {
 class ScrollArea;
@@ -31,7 +33,7 @@ struct Contact {
 
 class Autocomplete : public Ui::RpWidget {
 public:
-	Autocomplete(QWidget *parent, not_null<AuthSession*> session);
+	Autocomplete(QWidget *parent, not_null<Main::Session*> session);
 
 	void activate(not_null<Ui::InputField*> field);
 	void deactivate();
@@ -47,7 +49,7 @@ private:
 	void setupContent();
 	void submitValue(const QString &value);
 
-	not_null<AuthSession*> _session;
+	not_null<Main::Session*> _session;
 	Fn<void()> _activate;
 	Fn<void()> _deactivate;
 	Fn<void(int delta)> _moveSelection;
@@ -59,7 +61,7 @@ private:
 
 class ConfirmContactBox
 	: public BoxContent
-	, public HistoryView::ElementDelegate {
+	, public HistoryView::SimpleElementDelegate {
 public:
 	ConfirmContactBox(
 		QWidget*,
@@ -69,16 +71,6 @@ public:
 
 	using Element = HistoryView::Element;
 	HistoryView::Context elementContext() override;
-	std::unique_ptr<Element> elementCreate(
-		not_null<HistoryMessage*> message) override;
-	std::unique_ptr<Element> elementCreate(
-		not_null<HistoryService*> message) override;
-	bool elementUnderCursor(not_null<const Element*> view) override;
-	void elementAnimationAutoplayAsync(
-		not_null<const Element*> element) override;
-	TimeMs elementHighlightTime(
-		not_null<const Element*> element) override;
-	bool elementInSelectionMode() override;
 
 protected:
 	void prepare() override;

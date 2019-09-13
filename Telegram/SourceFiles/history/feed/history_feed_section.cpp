@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_service.h"
 #include "history/history_inner_widget.h"
 #include "core/event_filter.h"
+#include "core/shortcuts.h"
 #include "lang/lang_keys.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/shadow.h"
@@ -81,6 +82,7 @@ Widget::Widget(
 	_topBar->move(0, 0);
 	_topBar->resizeToWidth(width());
 	_topBar->show();
+
 	_topBar->forwardSelectionRequest(
 	) | rpl::start_with_next([=] {
 		forwardSelected();
@@ -134,6 +136,7 @@ Widget::Widget(
 	}, lifetime());
 
 	setupScrollDownButton();
+	setupShortcuts();
 }
 
 void Widget::setupScrollDownButton() {
@@ -228,7 +231,7 @@ void Widget::updateScrollDownPosition() {
 	auto top = anim::interpolate(
 		0,
 		_scrollDown->height() + st::historyToDownPosition.y(),
-		_scrollDownShown.current(_scrollDownIsShown ? 1. : 0.));
+		_scrollDownShown.value(_scrollDownIsShown ? 1. : 0.));
 	_scrollDown->moveToRight(
 		st::historyToDownPosition.x(),
 		_scroll->height() - top);
@@ -239,7 +242,7 @@ void Widget::updateScrollDownPosition() {
 }
 
 void Widget::scrollDownAnimationFinish() {
-	_scrollDownShown.finish();
+	_scrollDownShown.stop();
 	updateScrollDownPosition();
 }
 
@@ -295,13 +298,17 @@ void Widget::setInternalState(
 	restoreState(memento);
 }
 
-bool Widget::cmd_search() {
-	if (!inFocusChain()) {
-		return false;
-	}
-
-	App::main()->searchInChat(_feed);
-	return true;
+void Widget::setupShortcuts() {
+	Shortcuts::Requests(
+	) | rpl::filter([=] {
+		return isActiveWindow() && !Ui::isLayerShown() && inFocusChain();
+	}) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
+		using Command = Shortcuts::Command;
+		request->check(Command::Search, 2) && request->handle([=] {
+			App::main()->searchInChat(_feed);
+			return true;
+		});
+	}, lifetime());
 }
 
 HistoryView::Context Widget::listContext() {
@@ -530,10 +537,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 	//	updateListSize();
 	//}
 
-	const auto ms = getms();
-	_scrollDownShown.step(ms);
-
-	SectionWidget::PaintBackground(this, e);
+	SectionWidget::PaintBackground(this, e->rect());
 
 	if (_emptyTextView) {
 		Painter p(this);
@@ -548,7 +552,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 			p,
 			clip.translated(-left, -top),
 			TextSelection(),
-			getms());
+			crl::now());
 	}
 }
 

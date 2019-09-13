@@ -26,10 +26,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/confirm_box.h"
 #include "boxes/report_box.h"
 #include "mainwidget.h"
-#include "auth_session.h"
+#include "main/main_session.h"
 #include "apiwrap.h"
 #include "window/main_window.h"
-#include "window/window_controller.h"
+#include "window/window_session_controller.h"
 #include "storage/storage_shared_media.h"
 #include "lang/lang_keys.h"
 #include "styles/style_info.h"
@@ -172,8 +172,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupSharedMedia(
 	if (auto user = _peer->asUser()) {
 		addCommonGroupsButton(user, st::infoIconMediaGroup);
 	}
-	addMediaButton(MediaType::VoiceFile, st::infoIconMediaVoice);
-//	addMediaButton(MediaType::RoundFile, st::infoIconMediaRound);
+	addMediaButton(MediaType::RoundVoiceFile, st::infoIconMediaVoice);
 
 	auto result = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,

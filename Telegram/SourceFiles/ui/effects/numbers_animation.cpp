@@ -23,7 +23,7 @@ NumbersAnimation::NumbersAnimation(
 }
 
 void NumbersAnimation::setText(const QString &text, int value) {
-	if (_a_ready.animating(getms())) {
+	if (_a_ready.animating()) {
 		_delayedText = text;
 		_delayedValue = value;
 	} else {
@@ -89,20 +89,16 @@ int NumbersAnimation::countWidth() const {
 	return anim::interpolate(
 		_fromWidth,
 		_toWidth,
-		anim::easeOutCirc(1., _a_ready.current(1.)));
+		anim::easeOutCirc(1., _a_ready.value(1.)));
 }
 
 int NumbersAnimation::maxWidth() const {
 	return std::max(_fromWidth, _toWidth);
 }
 
-void NumbersAnimation::stepAnimation(TimeMs ms) {
-	_a_ready.step(ms);
-}
-
 void NumbersAnimation::finishAnimating() {
 	auto width = countWidth();
-	_a_ready.finish();
+	_a_ready.stop();
 	if (_widthChangedCallback && countWidth() != width) {
 		_widthChangedCallback();
 	}
@@ -115,7 +111,7 @@ void NumbersAnimation::paint(Painter &p, int x, int y, int outerWidth) {
 	auto digitsCount = _digits.size();
 	if (!digitsCount) return;
 
-	auto progress = anim::easeOutCirc(1., _a_ready.current(1.));
+	auto progress = anim::easeOutCirc(1., _a_ready.value(1.));
 	auto width = anim::interpolate(_fromWidth, _toWidth, progress);
 
 	QString singleChar('0');
@@ -158,7 +154,7 @@ LabelWithNumbers::LabelWithNumbers(
 , _textTop(textTop)
 , _before(GetBefore(value))
 , _after(GetAfter(value))
-, _numbers(_st.style.font, [this] { update(); })
+, _numbers(_st.style.font, [=] { update(); })
 , _beforeWidth(_st.style.font->width(_before))
 , _afterWidth(st.style.font->width(_after)) {
 	Expects((value.offset < 0) == (value.length == 0));
@@ -204,7 +200,7 @@ void LabelWithNumbers::setValue(const StringWithNumbers &value) {
 }
 
 void LabelWithNumbers::finishAnimating() {
-	_beforeWidthAnimation.finish();
+	_beforeWidthAnimation.stop();
 	_numbers.finishAnimating();
 	update();
 }
@@ -212,9 +208,7 @@ void LabelWithNumbers::finishAnimating() {
 void LabelWithNumbers::paintEvent(QPaintEvent *e) {
 	Painter p(this);
 
-	const auto ms = getms();
-	const auto beforeWidth = _beforeWidthAnimation.current(ms, _beforeWidth);
-	_numbers.stepAnimation(ms);
+	const auto beforeWidth = _beforeWidthAnimation.value(_beforeWidth);
 
 	p.setFont(_st.style.font);
 	p.setBrush(Qt::NoBrush);
@@ -247,6 +241,9 @@ Ui::StringWithNumbers ReplaceTag<Ui::StringWithNumbers>::Call(
 		ushort tag,
 		const Ui::StringWithNumbers &replacement) {
 	original.offset = FindTagReplacementPosition(original.text, tag);
+	if (original.offset < 0) {
+		return std::move(original);
+	}
 	original.text = ReplaceTag<QString>::Call(
 		std::move(original.text),
 		tag,

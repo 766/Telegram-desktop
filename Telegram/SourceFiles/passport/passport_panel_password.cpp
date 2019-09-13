@@ -14,6 +14,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/special_buttons.h"
+#include "boxes/passcode_box.h"
+#include "data/data_user.h"
 #include "lang/lang_keys.h"
 #include "info/profile/info_profile_icon.h"
 #include "styles/style_passport.h"
@@ -33,20 +35,21 @@ PanelAskPassword::PanelAskPassword(
 	st::passportPasswordUserpic)
 , _about1(
 	this,
-	lng_passport_request1(lt_bot, App::peerName(_controller->bot())),
-	Ui::FlatLabel::InitType::Simple,
+	tr::lng_passport_request1(
+		tr::now,
+		lt_bot,
+		App::peerName(_controller->bot())),
 	st::passportPasswordLabelBold)
 , _about2(
 	this,
-	lang(lng_passport_request2),
-	Ui::FlatLabel::InitType::Simple,
+	tr::lng_passport_request2(tr::now),
 	st::passportPasswordLabel)
 , _password(
 	this,
 	st::defaultInputField,
-	langFactory(lng_passport_password_placeholder))
-, _submit(this, langFactory(lng_passport_next), st::passportPasswordSubmit)
-, _forgot(this, lang(lng_signin_recover), st::defaultLinkButton) {
+	tr::lng_passport_password_placeholder())
+, _submit(this, tr::lng_passport_next(), st::passportPasswordSubmit)
+, _forgot(this, tr::lng_signin_recover(tr::now), st::defaultLinkButton) {
 	connect(_password, &Ui::PasswordInput::submitted, this, [=] {
 		submit();
 	});
@@ -57,7 +60,6 @@ PanelAskPassword::PanelAskPassword(
 		_hint.create(
 			this,
 			hint,
-			Ui::FlatLabel::InitType::Simple,
 			st::passportPasswordHintLabel);
 	}
 	_controller->passwordError(
@@ -82,7 +84,6 @@ void PanelAskPassword::showError(const QString &error) {
 	_error.create(
 		this,
 		error,
-		Ui::FlatLabel::InitType::Simple,
 		st::passportErrorLabel);
 	_error->show();
 	updateControlsGeometry();
@@ -175,10 +176,10 @@ void PanelNoPassword::setupContent() {
 			_inner,
 			object_ptr<Ui::FlatLabel>(
 				_inner,
-				lng_passport_request1(
+				tr::lng_passport_request1(
+					tr::now,
 					lt_bot,
 					App::peerName(_controller->bot())),
-				Ui::FlatLabel::InitType::Simple,
 				st::passportPasswordLabelBold)),
 		st::passportPasswordAbout1Padding)->entity();
 
@@ -187,8 +188,7 @@ void PanelNoPassword::setupContent() {
 			_inner,
 			object_ptr<Ui::FlatLabel>(
 				_inner,
-				lang(lng_passport_request2),
-				Ui::FlatLabel::InitType::Simple,
+				tr::lng_passport_request2(tr::now),
 				st::passportPasswordLabel)),
 		st::passportPasswordAbout2Padding)->entity();
 
@@ -209,8 +209,7 @@ void PanelNoPassword::setupContent() {
 			_inner,
 			object_ptr<Ui::FlatLabel>(
 				_inner,
-				lang(lng_passport_create_password),
-				Ui::FlatLabel::InitType::Simple,
+				tr::lng_passport_create_password(tr::now),
 				st::passportPasswordSetupLabel)),
 		st::passportFormAbout2Padding)->entity();
 
@@ -225,30 +224,49 @@ void PanelNoPassword::refreshBottom() {
 			object_ptr<Ui::FlatLabel>(
 				_inner,
 				(pattern.isEmpty()
-					? lang(lng_passport_about_password)
-					: lng_passport_link_sent(lt_email, pattern)),
-				Ui::FlatLabel::InitType::Simple,
+					? tr::lng_passport_about_password(tr::now)
+					: tr::lng_passport_code_sent(tr::now, lt_email, pattern)),
 				st::passportPasswordSetupLabel)),
 		st::passportFormAbout2Padding)->entity());
-	const auto button = _inner->add(
-		object_ptr<Ui::CenterWrap<Ui::RoundButton>>(
-			_inner,
-			object_ptr<Ui::RoundButton>(
-				_inner,
-				langFactory(pattern.isEmpty()
-					? lng_passport_password_create
-					: lng_cancel),
-				st::defaultBoxButton)));
 	if (pattern.isEmpty()) {
+		const auto button = _inner->add(
+			object_ptr<Ui::CenterWrap<Ui::RoundButton>>(
+				_inner,
+				object_ptr<Ui::RoundButton>(
+					_inner,
+					tr::lng_passport_password_create(),
+					st::defaultBoxButton)));
 		button->entity()->addClickHandler([=] {
 			_controller->setupPassword();
 		});
 	} else {
-		button->entity()->addClickHandler([=] {
+		const auto container = _inner->add(
+			object_ptr<Ui::FixedHeightWidget>(
+				_inner,
+				st::defaultBoxButton.height));
+		const auto cancel = Ui::CreateChild<Ui::RoundButton>(
+			container,
+			tr::lng_cancel(),
+			st::defaultBoxButton);
+		cancel->addClickHandler([=] {
 			_controller->cancelPasswordSubmit();
 		});
+		const auto validate = Ui::CreateChild<Ui::RoundButton>(
+			container,
+			tr::lng_passport_email_validate(),
+			st::defaultBoxButton);
+		validate->addClickHandler([=] {
+			_controller->validateRecoveryEmail();
+		});
+		container->widthValue(
+		) | rpl::start_with_next([=](int width) {
+			const auto both = cancel->width()
+				+ validate->width()
+				+ st::boxLittleSkip;
+			cancel->moveToLeft((width - both) / 2, 0, width);
+			validate->moveToRight((width - both) / 2, 0, width);
+		}, container->lifetime());
 	}
-	_button.reset(button);
 }
 
 } // namespace Passport

@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/win/notifications_manager_win.h"
 #include "platform/win/windows_app_user_model_id.h"
 #include "platform/win/windows_dlls.h"
-#include "platform/win/windows_event_filter.h"
 #include "lang/lang_keys.h"
 #include "mainwindow.h"
 #include "mainwidget.h"
@@ -19,20 +18,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/localstorage.h"
 #include "core/crash_reports.h"
 
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QDesktopWidget>
+#include <QtGui/QDesktopServices>
+#include <qpa/qplatformnativeinterface.h>
+
 #include <Shobjidl.h>
 #include <shellapi.h>
 
 #include <roapi.h>
-#include <wrl\client.h>
-#include <wrl\implements.h>
+#include <wrl/client.h>
+#include "platform/win/wrapper_wrl_implements_h.h"
 #include <windows.ui.notifications.h>
 
-#pragma warning(push)
-#pragma warning(disable:4091)
+#include <openssl/conf.h>
+#include <openssl/engine.h>
+#include <openssl/err.h>
+
 #include <dbghelp.h>
 #include <shlobj.h>
-#pragma warning(pop)
-
 #include <Shlwapi.h>
 #include <Strsafe.h>
 #include <Windowsx.h>
@@ -48,8 +52,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <functiondiscoverykeys.h>
 #include <intsafe.h>
 #include <guiddef.h>
-
-#include <qpa/qplatformnativeinterface.h>
 
 #ifndef DCX_USESTYLE
 #define DCX_USESTYLE 0x00010000
@@ -84,10 +86,6 @@ namespace {
 	_PsInitializer _psInitializer;
 
 };
-
-QAbstractNativeEventFilter *psNativeEventFilter() {
-	return EventFilter::createInstance();
-}
 
 void psDeleteDir(const QString &dir) {
 	std::wstring wDir = QDir::toNativeSeparators(dir).toStdWString();
@@ -132,29 +130,6 @@ namespace {
 	}
 }
 
-namespace {
-
-TimeMs _lastUserAction = 0;
-
-} // namespace
-
-void psUserActionDone() {
-	_lastUserAction = getms(true);
-	EventFilter::getInstance()->setSessionLoggedOff(false);
-}
-
-bool psIdleSupported() {
-	LASTINPUTINFO lii;
-	lii.cbSize = sizeof(LASTINPUTINFO);
-	return GetLastInputInfo(&lii);
-}
-
-TimeMs psIdleTime() {
-	LASTINPUTINFO lii;
-	lii.cbSize = sizeof(LASTINPUTINFO);
-	return GetLastInputInfo(&lii) ? (GetTickCount() - lii.dwTime) : (getms(true) - _lastUserAction);
-}
-
 QStringList psInitLogs() {
     return _initLogs;
 }
@@ -193,10 +168,6 @@ QString psAppDataPathOld() {
 	return QString();
 }
 
-QString psDownloadPath() {
-	return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + '/' + str_const_toString(AppName) + '/';
-}
-
 void psDoCleanup() {
 	try {
 		psAutoStart(false, true);
@@ -209,12 +180,12 @@ void psDoCleanup() {
 namespace {
 
 QRect _monitorRect;
-TimeMs _monitorLastGot = 0;
+crl::time _monitorLastGot = 0;
 
 } // namespace
 
 QRect psDesktopRect() {
-	auto tnow = getms();
+	auto tnow = crl::now();
 	if (tnow > _monitorLastGot + 1000LL || tnow < _monitorLastGot) {
 		_monitorLastGot = tnow;
 		HMONITOR hMonitor = MonitorFromWindow(App::wnd()->psHwnd(), MONITOR_DEFAULTTONEAREST);
@@ -311,29 +282,38 @@ int psFixPrevious() {
 }
 
 namespace Platform {
+namespace ThirdParty {
+namespace {
+
+void StartOpenSSL() {
+	// Don't use dynamic OpenSSL config, it can load unwanted DLLs.
+	OPENSSL_load_builtin_modules();
+	ENGINE_load_builtin_engines();
+	ERR_clear_error();
+	OPENSSL_no_config();
+}
+
+} // namespace
+
+void start() {
+	StartOpenSSL();
+}
+
+} // namespace ThirdParty
 
 void start() {
 	Dlls::init();
 }
 
 void finish() {
-	EventFilter::destroy();
-}
-
-QString SystemCountry() {
-	int chCount = GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, 0, 0);
-	if (chCount && chCount < 128) {
-		WCHAR wstrCountry[128];
-		int len = GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, wstrCountry, chCount);
-		if (len) {
-			return QString::fromStdWString(std::wstring(wstrCountry));
-		}
-	}
-	return QString();
 }
 
 bool IsApplicationActive() {
-	return static_cast<QApplication*>(QApplication::instance())->activeWindow() != nullptr;
+	return QApplication::activeWindow() != nullptr;
+}
+
+void SetApplicationIcon(const QIcon &icon) {
+	QApplication::setWindowIcon(icon);
 }
 
 QString CurrentExecutablePath(int argc, char *argv[]) {
@@ -354,168 +334,12 @@ QString CurrentExecutablePath(int argc, char *argv[]) {
 	return QString();
 }
 
-namespace {
-
-QString GetLangCodeById(unsigned lngId) {
-	auto primary = (lngId & 0xFFU);
-	switch (primary) {
-	case 0x36: return qsl("af");
-	case 0x1C: return qsl("sq");
-	case 0x5E: return qsl("am");
-	case 0x01: return qsl("ar");
-	case 0x2B: return qsl("hy");
-	case 0x4D: return qsl("as");
-	case 0x2C: return qsl("az");
-	case 0x45: return qsl("bn");
-	case 0x6D: return qsl("ba");
-	case 0x2D: return qsl("eu");
-	case 0x23: return qsl("be");
-	case 0x1A:
-	if (lngId == LANG_CROATIAN) {
-		return qsl("hr");
-	} else if (lngId == LANG_BOSNIAN_NEUTRAL || lngId == LANG_BOSNIAN) {
-		return qsl("bs");
-	}
-	return qsl("sr");
-	break;
-	case 0x7E: return qsl("br");
-	case 0x02: return qsl("bg");
-	case 0x92: return qsl("ku");
-	case 0x03: return qsl("ca");
-	case 0x04: return qsl("zh");
-	case 0x83: return qsl("co");
-	case 0x05: return qsl("cs");
-	case 0x06: return qsl("da");
-	case 0x65: return qsl("dv");
-	case 0x13: return qsl("nl");
-	case 0x09: return qsl("en");
-	case 0x25: return qsl("et");
-	case 0x38: return qsl("fo");
-	case 0x0B: return qsl("fi");
-	case 0x0c: return qsl("fr");
-	case 0x62: return qsl("fy");
-	case 0x56: return qsl("gl");
-	case 0x37: return qsl("ka");
-	case 0x07: return qsl("de");
-	case 0x08: return qsl("el");
-	case 0x6F: return qsl("kl");
-	case 0x47: return qsl("gu");
-	case 0x68: return qsl("ha");
-	case 0x0D: return qsl("he");
-	case 0x39: return qsl("hi");
-	case 0x0E: return qsl("hu");
-	case 0x0F: return qsl("is");
-	case 0x70: return qsl("ig");
-	case 0x21: return qsl("id");
-	case 0x5D: return qsl("iu");
-	case 0x3C: return qsl("ga");
-	case 0x34: return qsl("xh");
-	case 0x35: return qsl("zu");
-	case 0x10: return qsl("it");
-	case 0x11: return qsl("ja");
-	case 0x4B: return qsl("kn");
-	case 0x3F: return qsl("kk");
-	case 0x53: return qsl("kh");
-	case 0x87: return qsl("rw");
-	case 0x12: return qsl("ko");
-	case 0x40: return qsl("ky");
-	case 0x54: return qsl("lo");
-	case 0x26: return qsl("lv");
-	case 0x27: return qsl("lt");
-	case 0x6E: return qsl("lb");
-	case 0x2F: return qsl("mk");
-	case 0x3E: return qsl("ms");
-	case 0x4C: return qsl("ml");
-	case 0x3A: return qsl("mt");
-	case 0x81: return qsl("mi");
-	case 0x4E: return qsl("mr");
-	case 0x50: return qsl("mn");
-	case 0x61: return qsl("ne");
-	case 0x14: return qsl("no");
-	case 0x82: return qsl("oc");
-	case 0x48: return qsl("or");
-	case 0x63: return qsl("ps");
-	case 0x29: return qsl("fa");
-	case 0x15: return qsl("pl");
-	case 0x16: return qsl("pt");
-	case 0x67: return qsl("ff");
-	case 0x46: return qsl("pa");
-	case 0x18: return qsl("ro");
-	case 0x17: return qsl("rm");
-	case 0x19: return qsl("ru");
-	case 0x3B: return qsl("se");
-	case 0x4F: return qsl("sa");
-	case 0x32: return qsl("tn");
-	case 0x59: return qsl("sd");
-	case 0x5B: return qsl("si");
-	case 0x1B: return qsl("sk");
-	case 0x24: return qsl("sl");
-	case 0x0A: return qsl("es");
-	case 0x41: return qsl("sw");
-	case 0x1D: return qsl("sv");
-	case 0x28: return qsl("tg");
-	case 0x49: return qsl("ta");
-	case 0x44: return qsl("tt");
-	case 0x4A: return qsl("te");
-	case 0x1E: return qsl("th");
-	case 0x51: return qsl("bo");
-	case 0x73: return qsl("ti");
-	case 0x1F: return qsl("tr");
-	case 0x42: return qsl("tk");
-	case 0x22: return qsl("uk");
-	case 0x20: return qsl("ur");
-	case 0x80: return qsl("ug");
-	case 0x43: return qsl("uz");
-	case 0x2A: return qsl("vi");
-	case 0x52: return qsl("cy");
-	case 0x88: return qsl("wo");
-	case 0x78: return qsl("ii");
-	case 0x6A: return qsl("yo");
-	}
-	return QString();
-}
-
-} // namespace
-
-QString SystemLanguage() {
-	constexpr auto kMaxLanguageLength = 128;
-
-	auto uiLanguageId = GetUserDefaultUILanguage();
-	auto uiLanguageLength = GetLocaleInfo(uiLanguageId, LOCALE_SNAME, nullptr, 0);
-	if (uiLanguageLength > 0 && uiLanguageLength < kMaxLanguageLength) {
-		WCHAR uiLanguageWideString[kMaxLanguageLength] = { 0 };
-		uiLanguageLength = GetLocaleInfo(uiLanguageId, LOCALE_SNAME, uiLanguageWideString, uiLanguageLength);
-		if (uiLanguageLength <= 0) {
-			return QString();
-		}
-		return QString::fromWCharArray(uiLanguageWideString);
-	}
-	auto uiLanguageCodeLength = GetLocaleInfo(uiLanguageId, LOCALE_ILANGUAGE, nullptr, 0);
-	if (uiLanguageCodeLength > 0 && uiLanguageCodeLength < kMaxLanguageLength) {
-		WCHAR uiLanguageCodeWideString[kMaxLanguageLength] = { 0 };
-		uiLanguageCodeLength = GetLocaleInfo(uiLanguageId, LOCALE_ILANGUAGE, uiLanguageCodeWideString, uiLanguageCodeLength);
-		if (uiLanguageCodeLength <= 0) {
-			return QString();
-		}
-
-		auto languageCode = 0U;
-		for (auto i = 0; i != uiLanguageCodeLength; ++i) {
-			auto ch = uiLanguageCodeWideString[i];
-			if (!ch) {
-				break;
-			}
-			languageCode *= 0x10U;
-			if (ch >= WCHAR('0') && ch <= WCHAR('9')) {
-				languageCode += static_cast<unsigned>(int(ch) - int(WCHAR('0')));
-			} else if (ch >= WCHAR('A') && ch <= WCHAR('F')) {
-				languageCode += static_cast<unsigned>(0x0A + int(ch) - int(WCHAR('A')));
-			} else {
-				return QString();
-			}
-		}
-		return GetLangCodeById(languageCode);
-	}
-	return QString();
+std::optional<crl::time> LastUserInputTime() {
+	auto lii = LASTINPUTINFO{ 0 };
+	lii.cbSize = sizeof(LASTINPUTINFO);
+	return GetLastInputInfo(&lii)
+		? std::make_optional(crl::now() + lii.dwTime - GetTickCount())
+		: std::nullopt;
 }
 
 } // namespace Platform
@@ -626,6 +450,54 @@ void RegisterCustomScheme() {
 #endif // !TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
 }
 
+PermissionStatus GetPermissionStatus(PermissionType type) {
+	if (type==PermissionType::Microphone) {
+		PermissionStatus result=PermissionStatus::Granted;
+		HKEY hKey;
+		LSTATUS res=RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone", 0, KEY_QUERY_VALUE, &hKey);
+		if(res==ERROR_SUCCESS) {
+			wchar_t buf[20];
+			DWORD length=sizeof(buf);
+			res=RegQueryValueEx(hKey, L"Value", NULL, NULL, (LPBYTE)buf, &length);
+			if(res==ERROR_SUCCESS) {
+				if(wcscmp(buf, L"Deny")==0) {
+					result=PermissionStatus::Denied;
+				}
+			}
+			RegCloseKey(hKey);
+		}
+		return result;
+	}
+	return PermissionStatus::Granted;
+}
+
+void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback) {
+	resultCallback(PermissionStatus::Granted);
+}
+
+void OpenSystemSettingsForPermission(PermissionType type) {
+	if (type == PermissionType::Microphone) {
+		crl::on_main([] {
+			ShellExecute(
+				nullptr,
+				L"open",
+				L"ms-settings:privacy-microphone",
+				nullptr,
+				nullptr,
+				SW_SHOWDEFAULT);
+		});
+	}
+}
+
+bool OpenSystemSettings(SystemSettingsType type) {
+	if (type == SystemSettingsType::Audio) {
+		crl::on_main([] {
+			WinExec("control.exe mmsys.cpl", SW_SHOW);
+		});
+	}
+	return true;
+}
+
 } // namespace Platform
 
 void psNewVersion() {
@@ -711,444 +583,31 @@ void psUpdateOverlayed(TWidget *widget) {
 	if (!wv) widget->setAttribute(Qt::WA_WState_Visible, false);
 }
 
-// Stack walk code is inspired by http://www.codeproject.com/Articles/11132/Walking-the-callstack
-
-static const int StackEntryMaxNameLength = MAX_SYM_NAME + 1;
-
-typedef BOOL(FAR STDAPICALLTYPE *t_SymCleanup)(
-	_In_ HANDLE hProcess
-);
-t_SymCleanup symCleanup = 0;
-
-typedef PVOID (FAR STDAPICALLTYPE *t_SymFunctionTableAccess64)(
-    _In_ HANDLE hProcess,
-    _In_ DWORD64 AddrBase
-);
-t_SymFunctionTableAccess64 symFunctionTableAccess64 = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_SymGetLineFromAddr64)(
-    _In_ HANDLE hProcess,
-    _In_ DWORD64 dwAddr,
-    _Out_ PDWORD pdwDisplacement,
-    _Out_ PIMAGEHLP_LINEW64 Line
-);
-t_SymGetLineFromAddr64 symGetLineFromAddr64 = 0;
-
-typedef DWORD64 (FAR STDAPICALLTYPE *t_SymGetModuleBase64)(
-    _In_ HANDLE hProcess,
-    _In_ DWORD64 qwAddr
-);
-t_SymGetModuleBase64 symGetModuleBase64 = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_SymGetModuleInfo64)(
-    _In_ HANDLE hProcess,
-    _In_ DWORD64 qwAddr,
-    _Out_ PIMAGEHLP_MODULEW64 ModuleInfo
-);
-t_SymGetModuleInfo64 symGetModuleInfo64 = 0;
-
-typedef DWORD (FAR STDAPICALLTYPE *t_SymGetOptions)(
-	VOID
-);
-t_SymGetOptions symGetOptions = 0;
-
-typedef DWORD (FAR STDAPICALLTYPE *t_SymSetOptions)(
-    _In_ DWORD SymOptions
-);
-t_SymSetOptions symSetOptions = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_SymGetSymFromAddr64)(
-	IN HANDLE hProcess,
-	IN DWORD64 dwAddr,
-	OUT PDWORD64 pdwDisplacement,
-	OUT PIMAGEHLP_SYMBOL64 Symbol
-);
-t_SymGetSymFromAddr64 symGetSymFromAddr64 = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_SymInitialize)(
-	_In_ HANDLE hProcess,
-	_In_opt_ PCWSTR UserSearchPath,
-	_In_ BOOL fInvadeProcess
-);
-t_SymInitialize symInitialize = 0;
-
-typedef DWORD64 (FAR STDAPICALLTYPE *t_SymLoadModule64)(
-	_In_ HANDLE hProcess,
-	_In_opt_ HANDLE hFile,
-	_In_opt_ PCSTR ImageName,
-	_In_opt_ PCSTR ModuleName,
-	_In_ DWORD64 BaseOfDll,
-	_In_ DWORD SizeOfDll
-);
-t_SymLoadModule64 symLoadModule64;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_StackWalk64)(
-	_In_ DWORD MachineType,
-	_In_ HANDLE hProcess,
-	_In_ HANDLE hThread,
-	_Inout_ LPSTACKFRAME64 StackFrame,
-	_Inout_ PVOID ContextRecord,
-	_In_opt_ PREAD_PROCESS_MEMORY_ROUTINE64 ReadMemoryRoutine,
-	_In_opt_ PFUNCTION_TABLE_ACCESS_ROUTINE64 FunctionTableAccessRoutine,
-	_In_opt_ PGET_MODULE_BASE_ROUTINE64 GetModuleBaseRoutine,
-	_In_opt_ PTRANSLATE_ADDRESS_ROUTINE64 TranslateAddress
-);
-t_StackWalk64 stackWalk64 = 0;
-
-typedef DWORD (FAR STDAPICALLTYPE *t_UnDecorateSymbolName)(
-	PCSTR DecoratedName,
-	PSTR UnDecoratedName,
-	DWORD UndecoratedLength,
-	DWORD Flags
-);
-t_UnDecorateSymbolName unDecorateSymbolName = 0;
-
-typedef BOOL(FAR STDAPICALLTYPE *t_SymGetSearchPath)(
-	_In_ HANDLE hProcess,
-	_Out_writes_(SearchPathLength) PWSTR SearchPath,
-	_In_ DWORD SearchPathLength
-);
-t_SymGetSearchPath symGetSearchPath = 0;
-
-BOOL __stdcall ReadProcessMemoryRoutine64(
-	_In_ HANDLE hProcess,
-	_In_ DWORD64 qwBaseAddress,
-	_Out_writes_bytes_(nSize) PVOID lpBuffer,
-	_In_ DWORD nSize,
-	_Out_ LPDWORD lpNumberOfBytesRead
-) {
-	SIZE_T st;
-	BOOL bRet = ReadProcessMemory(hProcess, (LPVOID)qwBaseAddress, lpBuffer, nSize, &st);
-	*lpNumberOfBytesRead = (DWORD)st;
-
-	return bRet;
-}
-
-// **************************************** ToolHelp32 ************************
-#define MAX_MODULE_NAME32 255
-#define TH32CS_SNAPMODULE   0x00000008
-#pragma pack( push, 8 )
-typedef struct tagMODULEENTRY32
-{
-	DWORD   dwSize;
-	DWORD   th32ModuleID;       // This module
-	DWORD   th32ProcessID;      // owning process
-	DWORD   GlblcntUsage;       // Global usage count on the module
-	DWORD   ProccntUsage;       // Module usage count in th32ProcessID's context
-	BYTE  * modBaseAddr;        // Base address of module in th32ProcessID's context
-	DWORD   modBaseSize;        // Size in bytes of module starting at modBaseAddr
-	HMODULE hModule;            // The hModule of this module in th32ProcessID's context
-	char    szModule[MAX_MODULE_NAME32 + 1];
-	char    szExePath[MAX_PATH];
-} MODULEENTRY32;
-typedef MODULEENTRY32 *PMODULEENTRY32;
-typedef MODULEENTRY32 *LPMODULEENTRY32;
-#pragma pack( pop )
-
-typedef HANDLE (FAR STDAPICALLTYPE *t_CreateToolhelp32Snapshot)(DWORD dwFlags, DWORD th32ProcessID);
-t_CreateToolhelp32Snapshot createToolhelp32Snapshot = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_Module32First)(HANDLE hSnapshot, LPMODULEENTRY32 lpme);
-t_Module32First module32First = 0;
-
-typedef BOOL (FAR STDAPICALLTYPE *t_Module32Next)(HANDLE hSnapshot, LPMODULEENTRY32 lpme);
-t_Module32Next module32Next = 0;
-
-bool LoadDbgHelp(bool extended = false) {
-	if (stackWalk64 && (!extended || symInitialize)) return true;
-
-	HMODULE hDll = 0;
-
-	WCHAR szTemp[4096];
-	if (GetModuleFileName(NULL, szTemp, 4096) > 0) {
-		wcscat_s(szTemp, L".local");
-		if (GetFileAttributes(szTemp) == INVALID_FILE_ATTRIBUTES) {
-			// ".local" file does not exist, so we can try to load the dbghelp.dll from the "Debugging Tools for Windows"
-			if (GetEnvironmentVariable(L"ProgramFiles", szTemp, 4096) > 0) {
-				wcscat_s(szTemp, L"\\Debugging Tools for Windows\\dbghelp.dll");
-				// now check if the file exists:
-				if (GetFileAttributes(szTemp) != INVALID_FILE_ATTRIBUTES) {
-					hDll = LoadLibrary(szTemp);
-				}
-			}
-			// Still not found? Then try to load the 64-Bit version:
-			if (!hDll && (GetEnvironmentVariable(L"ProgramFiles", szTemp, 4096) > 0)) {
-				wcscat_s(szTemp, L"\\Debugging Tools for Windows 64-Bit\\dbghelp.dll");
-				if (GetFileAttributes(szTemp) != INVALID_FILE_ATTRIBUTES) {
-					hDll = LoadLibrary(szTemp);
-				}
-			}
-		}
-	}
-	if (!hDll) {
-		hDll = LoadLibrary(L"DBGHELP.DLL");
-	}
-
-	if (!hDll) return false;
-
-	stackWalk64 = (t_StackWalk64)GetProcAddress(hDll, "StackWalk64");
-	symFunctionTableAccess64 = (t_SymFunctionTableAccess64)GetProcAddress(hDll, "SymFunctionTableAccess64");
-	symGetModuleBase64 = (t_SymGetModuleBase64)GetProcAddress(hDll, "SymGetModuleBase64");
-
-	if (!stackWalk64 ||
-		!symFunctionTableAccess64 ||
-		!symGetModuleBase64) {
-		stackWalk64 = 0;
-		return false;
-	}
-
-	if (extended) {
-		HANDLE hProcess = GetCurrentProcess();
-		DWORD dwProcessId = GetCurrentProcessId();
-
-		symGetLineFromAddr64 = (t_SymGetLineFromAddr64)GetProcAddress(hDll, "SymGetLineFromAddrW64");
-		symGetModuleInfo64 = (t_SymGetModuleInfo64)GetProcAddress(hDll, "SymGetModuleInfoW64");
-		symGetSymFromAddr64 = (t_SymGetSymFromAddr64)GetProcAddress(hDll, "SymGetSymFromAddr64");
-		unDecorateSymbolName = (t_UnDecorateSymbolName)GetProcAddress(hDll, "UnDecorateSymbolName");
-		symInitialize = (t_SymInitialize)GetProcAddress(hDll, "SymInitializeW");
-		symCleanup = (t_SymCleanup)GetProcAddress(hDll, "SymCleanup");
-		symGetSearchPath = (t_SymGetSearchPath)GetProcAddress(hDll, "SymGetSearchPathW");
-		symGetOptions = (t_SymGetOptions)GetProcAddress(hDll, "SymGetOptions");
-		symSetOptions = (t_SymSetOptions)GetProcAddress(hDll, "SymSetOptions");
-		symLoadModule64 = (t_SymLoadModule64)GetProcAddress(hDll, "SymLoadModule64");
-		if (!symGetModuleInfo64 ||
-			!symGetLineFromAddr64 ||
-			!symGetSymFromAddr64 ||
-			!unDecorateSymbolName ||
-			!symInitialize ||
-			!symCleanup ||
-			!symGetOptions ||
-			!symSetOptions ||
-			!symLoadModule64) {
-			symInitialize = 0;
-			return false;
-		}
-
-		const size_t nSymPathLen = 10 * MAX_PATH;
-		WCHAR szSymPath[nSymPathLen] = { 0 };
-
-		wcscat_s(szSymPath, nSymPathLen, L".;..;");
-
-		WCHAR szTemp[MAX_PATH + 1] = { 0 };
-		if (GetCurrentDirectory(MAX_PATH, szTemp) > 0)	{
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L";");
-		}
-
-		if (GetModuleFileName(NULL, szTemp, MAX_PATH) > 0) {
-			for (WCHAR *p = (szTemp + wcslen(szTemp) - 1); p >= szTemp; --p) {
-				if ((*p == '\\') || (*p == '/') || (*p == ':'))	{
-					*p = 0;
-					break;
-				}
-			}
-			if (wcslen(szTemp) > 0)	{
-				wcscat_s(szSymPath, nSymPathLen, szTemp);
-				wcscat_s(szSymPath, nSymPathLen, L";");
-			}
-		}
-		if (GetEnvironmentVariable(L"_NT_SYMBOL_PATH", szTemp, MAX_PATH) > 0) {
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L";");
-		}
-		if (GetEnvironmentVariable(L"_NT_ALTERNATE_SYMBOL_PATH", szTemp, MAX_PATH) > 0) {
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L";");
-		}
-		if (GetEnvironmentVariable(L"SYSTEMROOT", szTemp, MAX_PATH) > 0) {
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L";");
-
-			// also add the "system32"-directory:
-			wcscat_s(szTemp, MAX_PATH, L"\\system32");
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L";");
-		}
-
-		if (GetEnvironmentVariable(L"SYSTEMDRIVE", szTemp, MAX_PATH) > 0) {
-			wcscat_s(szSymPath, nSymPathLen, L"SRV*");
-			wcscat_s(szSymPath, nSymPathLen, szTemp);
-			wcscat_s(szSymPath, nSymPathLen, L"\\websymbols*http://msdl.microsoft.com/download/symbols;");
-		} else {
-			wcscat_s(szSymPath, nSymPathLen, L"SRV*c:\\websymbols*http://msdl.microsoft.com/download/symbols;");
-		}
-
-		if (symInitialize(hProcess, szSymPath, FALSE) == FALSE) {
-			symInitialize = 0;
-			return false;
-		}
-
-		DWORD symOptions = symGetOptions();
-		symOptions |= SYMOPT_LOAD_LINES;
-		symOptions |= SYMOPT_FAIL_CRITICAL_ERRORS;
-		symOptions = symSetOptions(symOptions);
-
-		const WCHAR *dllname[] = { L"kernel32.dll",  L"tlhelp32.dll" };
-		HINSTANCE hToolhelp = NULL;
-
-		HANDLE hSnap;
-		MODULEENTRY32 me;
-		me.dwSize = sizeof(me);
-		BOOL keepGoing;
-		size_t i;
-
-		for (i = 0; i < (sizeof(dllname) / sizeof(dllname[0])); i++) {
-			hToolhelp = LoadLibrary(dllname[i]);
-			if (!hToolhelp) continue;
-
-			createToolhelp32Snapshot = (t_CreateToolhelp32Snapshot)GetProcAddress(hToolhelp, "CreateToolhelp32Snapshot");
-			module32First = (t_Module32First)GetProcAddress(hToolhelp, "Module32First");
-			module32Next = (t_Module32Next)GetProcAddress(hToolhelp, "Module32Next");
-			if (createToolhelp32Snapshot && module32First && module32Next) {
-				break; // found the functions!
-			}
-			FreeLibrary(hToolhelp);
-			hToolhelp = NULL;
-		}
-
-		if (hToolhelp == NULL) {
-			return false;
-		}
-
-		hSnap = createToolhelp32Snapshot(TH32CS_SNAPMODULE, dwProcessId);
-		if (hSnap == (HANDLE)-1)
-			return FALSE;
-
-		keepGoing = !!module32First(hSnap, &me);
-		int cnt = 0;
-		while (keepGoing) {
-			symLoadModule64(hProcess, 0, me.szExePath, me.szModule, (DWORD64)me.modBaseAddr, me.modBaseSize);
-			++cnt;
-			keepGoing = !!module32Next(hSnap, &me);
-		}
-		CloseHandle(hSnap);
-		FreeLibrary(hToolhelp);
-
-		return (cnt > 0);
-	}
-
-	return true;
-}
-
-struct StackEntry {
-	DWORD64 offset;  // if 0, we have no valid entry
-	CHAR name[StackEntryMaxNameLength];
-	CHAR undName[StackEntryMaxNameLength];
-	CHAR undFullName[StackEntryMaxNameLength];
-	DWORD64 offsetFromSmybol;
-	DWORD offsetFromLine;
-	DWORD lineNumber;
-	WCHAR lineFileName[StackEntryMaxNameLength];
-	DWORD symType;
-	LPCSTR symTypeString;
-	WCHAR moduleName[StackEntryMaxNameLength];
-	DWORD64 baseOfImage;
-	WCHAR loadedImageName[StackEntryMaxNameLength];
-};
-
-enum StackEntryType {
-	StackEntryFirst,
-	StackEntryNext,
-	StackEntryLast,
-};
-
-char GetModuleInfoData[2 * sizeof(IMAGEHLP_MODULEW64)];
-BOOL _getModuleInfo(HANDLE hProcess, DWORD64 baseAddr, IMAGEHLP_MODULEW64 *pModuleInfo) {
-	pModuleInfo->SizeOfStruct = sizeof(IMAGEHLP_MODULEW64);
-
-	memcpy(GetModuleInfoData, pModuleInfo, sizeof(IMAGEHLP_MODULEW64));
-	if (symGetModuleInfo64(hProcess, baseAddr, (IMAGEHLP_MODULEW64*)GetModuleInfoData) != FALSE) {
-		// only copy as much memory as is reserved...
-		memcpy(pModuleInfo, GetModuleInfoData, sizeof(IMAGEHLP_MODULEW64));
-		pModuleInfo->SizeOfStruct = sizeof(IMAGEHLP_MODULEW64);
-		return TRUE;
-	}
-	return FALSE;
-}
-
 void psWriteDump() {
-}
-
-void psWriteStackTrace() {
 #ifndef TDESKTOP_DISABLE_CRASH_REPORTS
-	if (!LoadDbgHelp()) {
-		CrashReports::dump() << "ERROR: Could not load dbghelp.dll!\n";
-		return;
+	PROCESS_MEMORY_COUNTERS data = { 0 };
+	if (Dlls::GetProcessMemoryInfo
+		&& Dlls::GetProcessMemoryInfo(
+			GetCurrentProcess(),
+			&data,
+			sizeof(data))) {
+		const auto mb = 1024 * 1024;
+		CrashReports::dump()
+			<< "Memory-usage: "
+			<< (data.PeakWorkingSetSize / mb)
+			<< " MB (peak), "
+			<< (data.WorkingSetSize / mb)
+			<< " MB (current)\n";
+		CrashReports::dump()
+			<< "Pagefile-usage: "
+			<< (data.PeakPagefileUsage / mb)
+			<< " MB (peak), "
+			<< (data.PagefileUsage / mb)
+			<< " MB (current)\n";
 	}
-
-	HANDLE hThread = GetCurrentThread(), hProcess = GetCurrentProcess();
-	const CONTEXT *context = NULL;
-	LPVOID pUserData = NULL;
-
-	CONTEXT c;
-	int frameNum;
-
-	memset(&c, 0, sizeof(CONTEXT));
-	c.ContextFlags = CONTEXT_FULL;
-	RtlCaptureContext(&c);
-
-	// init STACKFRAME for first call
-	STACKFRAME64 s; // in/out stackframe
-	memset(&s, 0, sizeof(s));
-	DWORD imageType;
-#ifdef _M_IX86
-	// normally, call ImageNtHeader() and use machine info from PE header
-	imageType = IMAGE_FILE_MACHINE_I386;
-	s.AddrPC.Offset = c.Eip;
-	s.AddrPC.Mode = AddrModeFlat;
-	s.AddrFrame.Offset = c.Ebp;
-	s.AddrFrame.Mode = AddrModeFlat;
-	s.AddrStack.Offset = c.Esp;
-	s.AddrStack.Mode = AddrModeFlat;
-#elif _M_X64
-	imageType = IMAGE_FILE_MACHINE_AMD64;
-	s.AddrPC.Offset = c.Rip;
-	s.AddrPC.Mode = AddrModeFlat;
-	s.AddrFrame.Offset = c.Rsp;
-	s.AddrFrame.Mode = AddrModeFlat;
-	s.AddrStack.Offset = c.Rsp;
-	s.AddrStack.Mode = AddrModeFlat;
-#elif _M_IA64
-	imageType = IMAGE_FILE_MACHINE_IA64;
-	s.AddrPC.Offset = c.StIIP;
-	s.AddrPC.Mode = AddrModeFlat;
-	s.AddrFrame.Offset = c.IntSp;
-	s.AddrFrame.Mode = AddrModeFlat;
-	s.AddrBStore.Offset = c.RsBSP;
-	s.AddrBStore.Mode = AddrModeFlat;
-	s.AddrStack.Offset = c.IntSp;
-	s.AddrStack.Mode = AddrModeFlat;
-#else
-#error "Platform not supported!"
-#endif
-
-	for (frameNum = 0; frameNum < 1024; ++frameNum) {
-		// get next stack frame (StackWalk64(), SymFunctionTableAccess64(), SymGetModuleBase64())
-		// if this returns ERROR_INVALID_ADDRESS (487) or ERROR_NOACCESS (998), you can
-		// assume that either you are done, or that the stack is so hosed that the next
-		// deeper frame could not be found.
-		// CONTEXT need not to be suplied if imageTyp is IMAGE_FILE_MACHINE_I386!
-		if (!stackWalk64(imageType, hProcess, hThread, &s, &c, ReadProcessMemoryRoutine64, symFunctionTableAccess64, symGetModuleBase64, NULL)) {
-			CrashReports::dump() << "ERROR: Call to StackWalk64() failed!\n";
-			return;
-		}
-
-		if (s.AddrPC.Offset == s.AddrReturn.Offset) {
-			CrashReports::dump() << s.AddrPC.Offset << "\n";
-			CrashReports::dump() << "ERROR: StackWalk64() endless callstack!";
-			return;
-		}
-		if (s.AddrPC.Offset != 0) { // we seem to have a valid PC
-			CrashReports::dump() << s.AddrPC.Offset << "\n";
-		}
-
-		if (s.AddrReturn.Offset == 0) {
-			break;
-		}
-	}
-#endif // !TDESKTOP_DISABLE_CRASH_REPORTS
+#endif // TDESKTOP_DISABLE_CRASH_REPORTS
 }
 
-bool psLaunchMaps(const LocationCoords &coords) {
-	return QDesktopServices::openUrl(qsl("bingmaps:?lvl=16&collection=point.%1_%2_Point").arg(coords.latAsString()).arg(coords.lonAsString()));
+bool psLaunchMaps(const Data::LocationPoint &point) {
+	return QDesktopServices::openUrl(qsl("bingmaps:?lvl=16&collection=point.%1_%2_Point").arg(point.latAsString()).arg(point.lonAsString()));
 }

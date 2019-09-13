@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/win/windows_dlls.h"
 
+#include <VersionHelpers.h>
 #include <QtCore/QSysInfo>
 
 namespace Platform {
@@ -50,6 +51,7 @@ f_RmRegisterResources RmRegisterResources;
 f_RmGetList RmGetList;
 f_RmShutdown RmShutdown;
 f_RmEndSession RmEndSession;
+f_GetProcessMemoryInfo GetProcessMemoryInfo;
 
 HINSTANCE LibUxTheme;
 HINSTANCE LibShell32;
@@ -58,6 +60,7 @@ HINSTANCE LibPropSys;
 HINSTANCE LibComBase;
 HINSTANCE LibDwmApi;
 HINSTANCE LibRstrtMgr;
+HINSTANCE LibPsApi;
 
 void start() {
 	init();
@@ -74,8 +77,7 @@ void start() {
 	LibUxTheme = LoadLibrary(L"UXTHEME.DLL");
 	load(LibUxTheme, "SetWindowTheme", SetWindowTheme);
 
-	auto version = QSysInfo::windowsVersion();
-	if (version >= QSysInfo::WV_VISTA) {
+	if (IsWindowsVistaOrGreater()) {
 		LibWtsApi32 = LoadLibrary(L"WTSAPI32.DLL");
 		load(LibWtsApi32, "WTSRegisterSessionNotification", WTSRegisterSessionNotification);
 		load(LibWtsApi32, "WTSUnRegisterSessionNotification", WTSUnRegisterSessionNotification);
@@ -84,7 +86,7 @@ void start() {
 		load(LibPropSys, "PropVariantToString", PropVariantToString);
 		load(LibPropSys, "PSStringFromPropertyKey", PSStringFromPropertyKey);
 
-		if (version >= QSysInfo::WV_WINDOWS8) {
+		if (IsWindows8OrGreater()) {
 			LibComBase = LoadLibrary(L"COMBASE.DLL");
 			load(LibComBase, "RoGetActivationFactory", RoGetActivationFactory);
 			load(LibComBase, "WindowsCreateStringReference", WindowsCreateStringReference);
@@ -101,6 +103,9 @@ void start() {
 		load(LibRstrtMgr, "RmShutdown", RmShutdown);
 		load(LibRstrtMgr, "RmEndSession", RmEndSession);
 	}
+
+	LibPsApi = LoadLibrary(L"PSAPI.DLL");
+	load(LibPsApi, "GetProcessMemoryInfo", GetProcessMemoryInfo);
 }
 
 } // namespace Dlls

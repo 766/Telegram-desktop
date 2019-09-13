@@ -13,14 +13,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_main.h"
 #include "settings/settings_notifications.h"
 #include "settings/settings_privacy_security.h"
+#include "settings/settings_calls.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/widgets/labels.h"
 #include "info/profile/info_profile_button.h"
 #include "boxes/abstract_box.h"
+#include "window/themes/window_theme_editor_box.h"
+#include "window/window_session_controller.h"
+#include "window/window_controller.h"
 #include "lang/lang_keys.h"
 #include "mainwindow.h"
-#include "auth_session.h"
+#include "main/main_session.h"
 #include "styles/style_boxes.h"
 #include "styles/style_settings.h"
 
@@ -29,21 +33,22 @@ namespace Settings {
 object_ptr<Section> CreateSection(
 		Type type,
 		not_null<QWidget*> parent,
-		Window::Controller *controller,
-		UserData *self) {
+		not_null<Window::SessionController*> controller) {
 	switch (type) {
 	case Type::Main:
-		return object_ptr<Main>(parent, controller, self);
+		return object_ptr<Main>(parent, controller);
 	case Type::Information:
-		return object_ptr<Information>(parent, controller, self);
+		return object_ptr<Information>(parent, controller);
 	case Type::Notifications:
-		return object_ptr<Notifications>(parent, self);
+		return object_ptr<Notifications>(parent, controller);
 	case Type::PrivacySecurity:
-		return object_ptr<PrivacySecurity>(parent, self);
+		return object_ptr<PrivacySecurity>(parent, controller);
 	case Type::Advanced:
-		return object_ptr<Advanced>(parent, self);
+		return object_ptr<Advanced>(parent, controller);
 	case Type::Chat:
-		return object_ptr<Chat>(parent, self);
+		return object_ptr<Chat>(parent, controller);
+	case Type::Calls:
+		return object_ptr<Calls>(parent, controller);
 	}
 	Unexpected("Settings section type in Widget::createInnerWidget.");
 }
@@ -72,15 +77,6 @@ void AddDividerText(
 			std::move(text),
 			st::boxDividerLabel),
 		st::settingsDividerLabelPadding));
-}
-
-not_null<Button*> AddButton(
-		not_null<Ui::VerticalLayout*> container,
-		LangKey text,
-		const style::InfoProfileButton &st,
-		const style::icon *leftIcon,
-		int iconLeft) {
-	return AddButton(container, Lang::Viewer(text), st, leftIcon, iconLeft);
 }
 
 not_null<Button*> AddButton(
@@ -124,13 +120,13 @@ void CreateRightLabel(
 		not_null<Button*> button,
 		rpl::producer<QString> label,
 		const style::InfoProfileButton &st,
-		LangKey buttonText) {
+		rpl::producer<QString> buttonText) {
 	const auto name = Ui::CreateChild<Ui::FlatLabel>(
 		button.get(),
 		st::settingsButtonRight);
 	rpl::combine(
 		button->widthValue(),
-		Lang::Viewer(buttonText),
+		std::move(buttonText),
 		std::move(label)
 	) | rpl::start_with_next([=, &st](
 			int width,
@@ -150,20 +146,25 @@ void CreateRightLabel(
 
 not_null<Button*> AddButtonWithLabel(
 		not_null<Ui::VerticalLayout*> container,
-		LangKey text,
+		rpl::producer<QString> text,
 		rpl::producer<QString> label,
 		const style::InfoProfileButton &st,
 		const style::icon *leftIcon,
 		int iconLeft) {
-	const auto button = AddButton(container, text, st, leftIcon, iconLeft);
-	CreateRightLabel(button, std::move(label), st, text);
+	const auto button = AddButton(
+		container,
+		rpl::duplicate(text),
+		st,
+		leftIcon,
+		iconLeft);
+	CreateRightLabel(button, std::move(label), st, std::move(text));
 	return button;
 }
 
-void AddSubsectionTitle(
+not_null<Ui::FlatLabel*> AddSubsectionTitle(
 		not_null<Ui::VerticalLayout*> container,
 		rpl::producer<QString> text) {
-	container->add(
+	return container->add(
 		object_ptr<Ui::FlatLabel>(
 			container,
 			std::move(text),
@@ -171,21 +172,26 @@ void AddSubsectionTitle(
 		st::settingsSubsectionTitlePadding);
 }
 
-void AddSubsectionTitle(
-		not_null<Ui::VerticalLayout*> container,
-		LangKey text) {
-	AddSubsectionTitle(container, Lang::Viewer(text));
-}
-
-void FillMenu(Fn<void(Type)> showOther, MenuCallback addAction) {
-	if (!Auth().supportMode()) {
+void FillMenu(
+		not_null<Window::SessionController*> controller,
+		Type type,
+		Fn<void(Type)> showOther,
+		MenuCallback addAction) {
+	const auto window = &controller->window();
+	if (type == Type::Chat) {
 		addAction(
-			lang(lng_settings_information),
-			[=] { showOther(Type::Information); });
+			tr::lng_settings_bg_theme_create(tr::now),
+			[=] { window->show(Box(Window::Theme::CreateBox, window)); });
+	} else {
+		if (!controller->session().supportMode()) {
+			addAction(
+				tr::lng_settings_information(tr::now),
+				[=] { showOther(Type::Information); });
+		}
+		addAction(
+			tr::lng_settings_logout(tr::now),
+			[=] { window->widget()->onLogout(); });
 	}
-	addAction(
-		lang(lng_settings_logout),
-		[=] { App::wnd()->onLogout(); });
 }
 
 } // namespace Settings
